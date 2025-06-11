@@ -169,75 +169,114 @@ try:
         return df  # <-- Return DataFrame to use later
 
     # ---- Download both files and store DataFrames ----
-    df_Naturafdelingen = download_excel_for_ean("5798005770220", "Naturafdelingen", set_view=True)
+    df_Naturafdelingen = download_excel_for_ean("5798005770220", "Naturafdelingen", set_view=True) #omkostni
     df_Vejafdelingen = download_excel_for_ean("5798005770213", "Vejafdelingen", set_view=False)
 
+    # ---- 1. Setup and Read SQL from file ----
+    conn_str = (
+        "DRIVER={ODBC Driver 17 for SQL Server};"
+        "SERVER=faellessql;"
+        "DATABASE=Opus;"
+        "Trusted_Connection=yes"
+    )
 
-    #tjek om dato er overskredet 
-    #tjek om navn findes, kan konveteres til azident og om den findes I opus:
+    sql_file_path = 'GET_AZIDENT.sql'
 
+    with open(sql_file_path, 'r', encoding='cp1252') as file:
+        sql_query = file.read()
 
-    # Loop through each row
-    for idx, row in df_Vejafdelingen.iterrows():
-        reg_dato = row.get("Reg.dato")
-        
-        # Check if Reg.dato is a valid date and greater than Oldbilagsdato
-        if pd.notnull(reg_dato) and pd.to_datetime(reg_dato) > BilagsDato:
+    conn = pyodbc.connect(conn_str)
+    cursor = conn.cursor()
+    cursor.execute(sql_query)
+
+    columns = [col[0] for col in cursor.description]
+    rows = cursor.fetchall()
+    df_ident = pd.DataFrame.from_records(rows, columns=columns)
+
+    cursor.close()
+    conn.close()
+
+    print("✅ SQL data loaded. Rows:", len(df_ident))
+
+    # ---- 3. Set BilagsDato cutoff ----
+    BilagsDato = datetime.strptime("03-06-2025", "%d-%m-%Y")
+
+    # ---- 4. Helper to extract first name ----
+    DISALLOWED_TERMS = {
+        "anden", "diverse", "entreprenørenheden", "entreprenørafdelingen",
+        "adm", "adm.", "økonomi", "vejafdelingen", "naturafdelingen",
+        "ikke angivet", "ukendt", "leverandør", "ref.", "faktura", "x"
+    }
+
+    def extract_first_name(text):
+        if not isinstance(text, str):
+            return None
+
+        cleaned = re.sub(r"(?i)(lev\.?\s*ref\.?\s*nr\.?:?|att:)", "", text).strip()
+        match = re.match(r"([A-ZÆØÅa-zæøå]+)", cleaned)
+        if match:
+            name_candidate = match.group(1)
+            if len(name_candidate) > 1 and name_candidate.lower() not in DISALLOWED_TERMS:
+                return name_candidate
+        return None
+
+    # ---- 5. Loop over both DataFrames ----
+    dataframes = [
+        ("Naturafdelingen", df_Naturafdelingen),
+        ("Vejafdelingen", df_Vejafdelingen)
+    ]
+
+    def process_dataframe(label, df):
+        if df.empty:
+            print(f"DataFrame for {label} is empty. Skipping.")
+            return
+
+        print(f"🔍 Processing DataFrame for {label}. Rows: {len(df)}")
+
+        for idx, row in df.iterrows():
+            reg_dato = row.get("Reg.dato")
             ref_navn = str(row.get("Ref.navn")).strip()
-            print("Datoen er ikke overskredet")
-            # Skip if it's 'n/a' or contains symbols other than dash (-)
-            if ref_navn.lower() != "n/a" and ref_navn.lower() != "nan" and re.match(r'^[\w\s\-]+$', ref_navn):
-                MedarbejderNavn = ref_navn
-                print(f"Medarbejdernavn: {MedarbejderNavn}")
-                # Setup connection string
-                conn_str = "DRIVER={ODBC Driver 17 for SQL Server};SERVER=faellessql;DATABASE=Opus;Trusted_Connection=yes"
-                conn = pyodbc.connect(conn_str)
-                cursor = conn.cursor()
+            faktura_nummer = row.get("Fakturabilag")
+")
 
-                # Read SQL query from file
-                with open('GET_AZIDENT.sql', 'r', encoding='utf-8') as file:
-                    sql_query = file.read()
+            if pd.notnull(reg_dato) and pd.to_datetime(reg_dato, errors='coerce') > BilagsDato:
+                if ref_navn.lower() not in ("n/a", "nan") and re.match(r'^[\w\s\-\.,:]+$', ref_navn):
+                    MedarbejderNavn = extract_first_name(ref_navn)
+                    if not MedarbejderNavn:
+                        continue
 
-                # Insert dynamic MedarbejderNavn into the SQL query
-                sql_query = sql_query.replace("'Medarbejder'", f"'{MedarbejderNavn}'")
+                    print(f"[{label}] Looking for: {MedarbejderNavn}")
+                    match = df_ident[df_ident["Fornavn"].str.lower() == MedarbejderNavn.lower()]
+                    if match.empty:
+                        match = df_ident[df_ident["Fornavn"].str.contains(MedarbejderNavn, case=False, na=False)]
 
-                # Execute query
-                cursor.execute(sql_query)
-                columns = [column[0] for column in cursor.description]
-                rows = cursor.fetchall()
+                    if match.empty:
+                        print(f"[{label}] Medarbejder not found in Opus: {MedarbejderNavn}")
+                    else:
+                        azident = match.iloc[0]["Ident"]
+                        print(f"[{label}] AZIDENT for {MedarbejderNavn}: {azident}")
+                        wait.until(EC.element_to_be_clickable((By.XPATH,"//div[.//span[text()='Bilagsforespørgsel']]"))).click()
+                        wait.until(EC.element_to_be_clickable((By.XPATH,"//div[.//span[text()='Søg omposteringsbilag']]"))).click()
+                        
+                        wait.until(EC.frame_to_be_available_and_switch_to_it((By.ID, "contentAreaFrame")))
+                        print("Switched to outer iframe: contentAreaFrame")
+                     
+                        wait.until(EC.frame_to_be_available_and_switch_to_it((By.NAME, "Søg andre bilag")))
+                        print("Switched to inner iframe: Søg andre bilag")
+                        wait.until(EC.element_to_be_clickable((By.XPATH, "//div[@title='Fakturabilagsnummer']"))).send_keys(faktura_nummer)
 
-                # Convert to DataFrame
-                df = pd.DataFrame.from_records(rows, columns=columns)
-
-                # Clean up connection
-                cursor.close()
-                conn.close()
-
-                # Check if result is empty
-                if df.empty:
-                    print("Medarbejder findes ikke i Opus")
-                    continue
-
-                # Extract AZIDENT value
-                azident = df.at[0, 'Ident']  # or use df.iloc[0]['Ident']
-
-                print("AZIDENT:", azident)
+                        
 
 
-    
 
 
-    #1. hentes en liste over alle ansatte i mtm via dbo.personale
-    #2. hentes en liste over beløbsgrænser - AZIDENT anvendes - derfor skal der først lave en "konvertering" af navn til ident.Hvis der er to 
-    # Hvis der er to navne skal den splitte dem og forsøge den første, hvis der er et hit, skal den anvende det, hvis ikke skal den prøve nr 2.
-    
-    
-    #3. Fjern alle række, hvis dato har overskredet bilagsdatoen hentet fra OO
-    # 4.loop igennem hver bilagsliste
-    #5. tjek om ref_navn eller andet findes i både personale og beløbsgrænselisten
+    # Execute for both
+    for label, df in dataframes:
+        process_dataframe(label, df)
+
+
     #6. hvis der er et match så videresend bilag via brugergrænsefladen
     # 7. sæt ny bilagsdato, som robotten kan hente ved næste kørsel
-
 
 
 
