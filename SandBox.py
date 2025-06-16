@@ -23,10 +23,7 @@ OpusPassword = OpusLogin.password
 OpusURL = orchestrator_connection.get_constant("OpusAdgangUrl").value
 EAN_Naturafdelingen = orchestrator_connection.get_constant("EAN_Naturafdelingen").value
 EAN_Vejafdelingen = orchestrator_connection.get_constant("EAN_Vejafdelingen").value
-BilagsDato = "05-06-2025"
-
-# Original date string in DD-MM-YYYY format
-date_str = "03-06-2025"
+date_str = orchestrator_connection.get_constant("Bilagsdato").value
 
 # Convert to datetime object
 BilagsDato = datetime.strptime(date_str, "%d-%m-%Y")
@@ -38,7 +35,7 @@ downloads_folder = os.path.join("C:\\Users", os.getlogin(), "Downloads")
 
 # ---- Configure Chrome options ----
 options = Options()
-options.add_argument("--headless=new")
+#options.add_argument("--headless=new")
 options.add_argument("--window-size=1920,900")
 options.add_argument("--start-maximized")
 options.add_argument("--disable-extensions")
@@ -73,7 +70,7 @@ try:
 
     try: 
         print("Navigerer til min økonomi")
-        wait.until(EC.element_to_be_clickable((By.ID, "tabIndex3"))).click()
+        wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "div[title='Min Økonomi']"))).click()
     except Exception as e:      
         orchestrator_connection.log_info(f'Fejl ved at finde knap, {e}')
         orchestrator_connection.log_info('Trying to find change button')
@@ -97,7 +94,8 @@ try:
         orchestrator_connection.log_info('Password changed and credential updated')
         time.sleep(2)
 
-        wait.until(EC.element_to_be_clickable((By.ID, "tabIndex3"))).click()
+        wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "div[title='Min Økonomi']"))).click()
+
     
     try:
         print("Trying to click using ID...")
@@ -166,11 +164,12 @@ try:
         os.rename(downloaded_file_path, final_path)
         print(f"Downloaded and saved as: {final_path}")
 
-        return df  # <-- Return DataFrame to use later
+        return df, final_path   # <-- Return DataFrame to use later
 
     # ---- Download both files and store DataFrames ----
-    df_Naturafdelingen = download_excel_for_ean("5798005770220", "Naturafdelingen", set_view=True) #omkostni
-    df_Vejafdelingen = download_excel_for_ean("5798005770213", "Vejafdelingen", set_view=False)
+    df_Naturafdelingen, path_Natur = download_excel_for_ean("5798005770220", "Naturafdelingen", set_view=True) 
+    df_Vejafdelingen, path_Vej = download_excel_for_ean("5798005770213", "Vejafdelingen", set_view=False)
+
 
     # ---- 1. Setup and Read SQL from file ----
     conn_str = (
@@ -196,7 +195,7 @@ try:
     cursor.close()
     conn.close()
 
-    print("✅ SQL data loaded. Rows:", len(df_ident))
+    print("SQL data loaded. Rows:", len(df_ident))
 
     # ---- 3. Set BilagsDato cutoff ----
     BilagsDato = datetime.strptime("03-06-2025", "%d-%m-%Y")
@@ -231,14 +230,15 @@ try:
             print(f"DataFrame for {label} is empty. Skipping.")
             return
 
-        print(f"🔍 Processing DataFrame for {label}. Rows: {len(df)}")
+        print(f"Processing DataFrame for {label}. Rows: {len(df)}")
 
         for idx, row in df.iterrows():
             reg_dato = row.get("Reg.dato")
             ref_navn = str(row.get("Ref.navn")).strip()
             faktura_nummer = row.get("Fakturabilag")
-")
-
+            AktueltBilagsDato = row.get("Bilagsdato")
+            formatted_date = AktueltBilagsDato.strftime("%d.%m.%Y") 
+   
             if pd.notnull(reg_dato) and pd.to_datetime(reg_dato, errors='coerce') > BilagsDato:
                 if ref_navn.lower() not in ("n/a", "nan") and re.match(r'^[\w\s\-\.,:]+$', ref_navn):
                     MedarbejderNavn = extract_first_name(ref_navn)
@@ -255,29 +255,91 @@ try:
                     else:
                         azident = match.iloc[0]["Ident"]
                         print(f"[{label}] AZIDENT for {MedarbejderNavn}: {azident}")
-                        wait.until(EC.element_to_be_clickable((By.XPATH,"//div[.//span[text()='Bilagsforespørgsel']]"))).click()
-                        wait.until(EC.element_to_be_clickable((By.XPATH,"//div[.//span[text()='Søg omposteringsbilag']]"))).click()
+                        
+                        driver.refresh()
+                        wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "div[title='Min Økonomi']"))).click()
+    
+                        try:
+                            wait.until(EC.element_to_be_clickable((By.ID, "subTabIndex2"))).click()
+                        except TimeoutException:
+                            wait.until(EC.element_to_be_clickable((By.XPATH, "//div[contains(text(), 'Bilag og fakturaer')]"))).click()
+                        
+                        
+                        wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "div[title='Bilagsforespørgsel']"))).click()
+
+                        wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "div[title='Søg andre bilag']"))).click()
                         
                         wait.until(EC.frame_to_be_available_and_switch_to_it((By.ID, "contentAreaFrame")))
-                        print("Switched to outer iframe: contentAreaFrame")
                      
                         wait.until(EC.frame_to_be_available_and_switch_to_it((By.NAME, "Søg andre bilag")))
-                        print("Switched to inner iframe: Søg andre bilag")
-                        wait.until(EC.element_to_be_clickable((By.XPATH, "//div[@title='Fakturabilagsnummer']"))).send_keys(faktura_nummer)
+
+                        fakturabilag_input = wait.until(EC.element_to_be_clickable((By.XPATH,"//label[contains(., 'Fakturabilag')]/following::input[1]")))
+                        fakturabilag_input.clear()
+                        fakturabilag_input.send_keys(faktura_nummer)
+
+                        input_azident = wait.until(EC.element_to_be_clickable((By.XPATH, "//span[contains(., 'Brugerid')]/ancestor::td/following-sibling::td//input[@type='text']")))
+                        input_azident.clear()
+                        #input_azident.send_keys(azident) # Sender ikke keys forci AZID ikke skal indgå i søgningen
+
+                        date_input = wait.until(EC.element_to_be_clickable((By.XPATH,"//span[contains(., 'Registreringsdato')]/ancestor::td/following-sibling::td//input[@type='text']")))
+                        date_input.clear()
+                        date_input.send_keys(formatted_date)  # or whatever date format is expected
+                        
+                        #click søg: 
+                        wait.until(EC.element_to_be_clickable((By.XPATH, "//div[@title='Klik for at søge (Ctrl+F8)']"))).click()
+                
+                        # --- Wait and check for 'ingen data' message ---
+                        time.sleep(5)
+                        if driver.find_elements(By.XPATH, "//span[text()='Tabel indeholder ingen data']"):
+                            print("Kunne ikke finde et bilag")
+                            continue
+                        
+                        #Click videresend: 
+                        wait.until(EC.element_to_be_clickable((By.XPATH, "//div[@title='Videresend']"))).click()
+                        time.sleep(2)
+
+                        # --- Exit both iframes ---
+                        driver.switch_to.default_content()
+
+                        # Now switch to the popup iframe
+                        wait.until(EC.frame_to_be_available_and_switch_to_it((By.ID, "URLSPW-0")))
+
+                        # Continue with interaction in URLSPW-0
+                        next_agent_input = wait.until(EC.element_to_be_clickable((By.XPATH, "//span[contains(text(), 'Næste agent')]/ancestor::td//following::input[@type='text' and contains(@class, 'lsField__input')]")))
+            
+                        next_agent_input.clear()
+                        next_agent_input.send_keys(azident)
+                        
+                        textarea = wait.until(EC.element_to_be_clickable((By.XPATH, "//textarea[@title='Comments for Forwarding']")))
+                        textarea.clear()
+                        textarea.send_keys("Videresendt af Robot")
 
                         
+                        #wait.until(EC.element_to_be_clickable((By.XPATH, "//span[normalize-space(text())='OK']/ancestor::div[contains(@class, 'lsButton')]"))).click()
+                        wait.until(EC.element_to_be_clickable((By.XPATH, "//span[normalize-space(text())='Annuller']/ancestor::div[contains(@class, 'lsButton')]"))).click()
 
 
+                        time.sleep(2)
+                        
 
 
     # Execute for both
     for label, df in dataframes:
         process_dataframe(label, df)
 
+    # 6. Slet excel filer
+    for file_path in [path_Natur, path_Vej]:
+        try:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+                print(f"Deleted: {file_path}")
+            else:
+                print(f"File not found: {file_path}")
+        except Exception as e:
+            print(f"Error deleting {file_path}: {e}")
 
-    #6. hvis der er et match så videresend bilag via brugergrænsefladen
     # 7. sæt ny bilagsdato, som robotten kan hente ved næste kørsel
-
+    OrchestratorConnection.update_constant("Bilagsdato", datetime.now().strftime("%d-%m-%Y"))
 
 
 except Exception as e:
