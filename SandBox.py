@@ -303,11 +303,48 @@ try:
                                 return False
                             return Levenshtein.distance(medarbejder_navn.lower(), kalde_first.lower()) <= 1
 
+
                         fuzzy_matches = df_ident[
                             df_ident["Kaldenavn"].apply(lambda x: is_first_name_match(MedarbejderNavn, x))
                         ]
 
-                        match = fuzzy_matches
+                        if fuzzy_matches.empty:
+                            print(f"[{label}] No fuzzy match for {MedarbejderNavn}")
+                            continue
+
+                        elif len(fuzzy_matches) == 1:
+                            # One match – proceed normally
+                            match = fuzzy_matches
+
+                        else:
+                            # Multiple matches – apply Levenshtein to refine
+                            distances = []
+                            for _, ident_row in fuzzy_matches.iterrows():
+                                kaldenavn = ident_row["Kaldenavn"]
+                                kalde_first = extract_first_from_kaldenavn(kaldenavn)
+                                if kalde_first:
+                                    distance = Levenshtein.distance(MedarbejderNavn.lower(), kalde_first.lower())
+                                    distances.append((ident_row, distance))
+
+                            min_distance = min(d[1] for d in distances)
+                            best_matches = [row for row, dist in distances if dist == min_distance]
+
+                            if len(best_matches) == 1:
+                                match = pd.DataFrame([best_matches[0]])
+                            else:
+                                # Compare full cleaned names
+                                def cleaned(s): return re.sub(r'\s+', '', s.lower()) if isinstance(s, str) else ''
+                                ref_clean = cleaned(ref_navn)
+                                full_name_matches = [
+                                    row for row in best_matches
+                                    if cleaned(row["Kaldenavn"]) == ref_clean
+                                ]
+                                if len(full_name_matches) == 1:
+                                    match = pd.DataFrame([full_name_matches[0]])
+                                else:
+                                    print(f"[{label}] Ambiguous matches for '{MedarbejderNavn}', skipping invoice.")
+                                    continue
+
 
                     if match.empty:
                         print(f"[{label}] Medarbejder not found in Opus: {MedarbejderNavn}")
@@ -403,7 +440,7 @@ try:
         except Exception as e:
             print(f"Error deleting {file_path}: {e}")
 
-    # 7. Sæt ny bilagsdato baseret på de håndterede bilag
+
 # 7. Sæt ny bilagsdato hvis der er håndterede bilag – og find max dato i begge Excel-filer
     if handled_bilagsdatoer:
         all_bilagsdatoer = []
