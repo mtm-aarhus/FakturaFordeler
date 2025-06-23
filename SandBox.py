@@ -1,3 +1,4 @@
+# === 1. Imports ===
 import os
 import time
 import random
@@ -17,7 +18,18 @@ import re
 import Levenshtein
 
 
-# ---- Henter Assets ----
+# === 2. Global Configuration ===
+az_pattern = re.compile(r'^AZ\d{5}$')
+downloads_folder = os.path.join("C:\\Users", os.getlogin(), "Downloads")
+DISALLOWED_TERMS = {
+    "anden", "diverse", "entreprenørenheden", "entreprenørafdelingen",
+    "adm", "adm.", "økonomi", "vejafdelingen", "naturafdelingen",
+    "ikke angivet", "ukendt", "leverandør", "ref.", "faktura", "x", "aarhus", "kommune"
+}
+max_retries = 3
+
+
+# === 3. Connect to Orchestrator and Load Credentials & Constants ===
 orchestrator_connection = OrchestratorConnection("Henter Assets", os.getenv('OpenOrchestratorSQL'), os.getenv('OpenOrchestratorKey'), None)
 #OpusLogin = orchestrator_connection.get_credential("OpusRobotBruger")
 OpusLogin = orchestrator_connection.get_credential("OpusLoginFaktura")
@@ -27,13 +39,12 @@ OpusURL = orchestrator_connection.get_constant("OpusAdgangUrl").value
 EAN_Naturafdelingen = orchestrator_connection.get_constant("EAN_Naturafdelingen").value
 EAN_Vejafdelingen = orchestrator_connection.get_constant("EAN_Vejafdelingen").value
 date_str = orchestrator_connection.get_constant("Bilagsdato").value
-# Convert to datetime object
 BilagsDato = datetime.strptime(date_str, "%d-%m-%Y")
-az_pattern = re.compile(r'^AZ\d{5}$')
 
-downloads_folder = os.path.join("C:\\Users", os.getlogin(), "Downloads")
 
-# ---- Configure Chrome options ----
+
+
+# === 4. Setup Chrome Driver ===
 options = Options()
 #options.add_argument("--headless=new")
 options.add_argument("--window-size=1920,900")
@@ -43,8 +54,6 @@ options.add_argument("--remote-debugging-pipe")
 options.add_argument("--disable-features=WebUsb")
 
 chrome_service = Service()
-max_retries = 3
-
 for attempt in range(1, max_retries + 1):
     try:
         print(f"Attempt {attempt}: Initializing ChromeDriver...")
@@ -60,14 +69,411 @@ for attempt in range(1, max_retries + 1):
 wait = WebDriverWait(driver, 100)
 print("ChromeDriver initialized successfully.")
 
+
+
+
+# === 5. Initialize Working Variables ===
+dataframes = []
+excel_paths = []
+handled_bilagsdatoer = []
+filtered_dfs = []
+
+# === 6. Define Utility and Processing Functions ===
+def check_and_extract_references(df):
+    kreditor_value = "55828415"
+
+    # Safety: Ensure df is not None and not empty
+    if df is None or df.empty:
+        print("DataFrame is None or empty.")
+        return [], None
+
+    # Safety: Ensure required columns exist
+    required_cols = ["Kreditornr.", "Bilagsdato", "Fakturanr./Reference."]
+    for col in required_cols:
+        if col not in df.columns:
+            print(f"Required column missing: {col}")
+            return [], None
+
+    # Filter by kreditor
+    filtered_df = df[df["Kreditornr."].astype(str) == kreditor_value].copy()
+    if filtered_df.empty:
+        print("No rows with Kreditornr. == 55828415")
+        return [], None
+
+    # Parse dates
+    filtered_df["Bilagsdato"] = pd.to_datetime(filtered_df["Bilagsdato"], errors='coerce')
+    filtered_df = filtered_df.dropna(subset=["Bilagsdato"])
+    if filtered_df.empty:
+        print("No valid 'Bilagsdato' for filtered rows.")
+        return [], None
+
+    oldest_date = filtered_df["Bilagsdato"].min()
+    faktura_refs = filtered_df["Fakturanr./Reference."].dropna().astype(str).tolist()
+    
+    print(f"Oldest Bilagsdato for Kreditornr. 55828415: {oldest_date.strftime('%d-%m-%Y')}")
+    print(f"Extracted Faktura references: {faktura_refs}")
+
+    return faktura_refs, oldest_date
+
+def filter_rows_by_references(df, ref_list):
+    if "Fakturanr./Reference." not in df.columns:
+        print("'Fakturanr./Reference.' column not found.")
+        return pd.DataFrame()
+
+    filtered = df[df["Fakturanr./Reference."].astype(str).isin(ref_list)]
+    print(f"Found {len(filtered)} matching rows based on references.")
+    return filtered
+
+def get_filtered_department_data(driver, wait, dept_name, refs, oldest_date, ean):
+    if not refs:
+        print(f"[{dept_name}] No references to search for.")
+        return None
+
+    print(f"[{dept_name}] Refreshing and navigating to search page...")
+    driver.refresh()
+    wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "div[title='Min Økonomi']"))).click()
+
+    try:
+        wait.until(EC.element_to_be_clickable((By.ID, "subTabIndex2"))).click()
+    except TimeoutException:
+        wait.until(EC.element_to_be_clickable((By.XPATH, "//div[contains(text(), 'Bilag og fakturaer')]"))).click()
+
+    wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "div[title='Bilagsforespørgsel']"))).click()
+    wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "div[title='Søg andre bilag']"))).click()
+
+    wait.until(EC.frame_to_be_available_and_switch_to_it((By.ID, "contentAreaFrame")))
+    wait.until(EC.frame_to_be_available_and_switch_to_it((By.NAME, "Søg andre bilag")))
+
+    # Fill form
+    wait.until(EC.element_to_be_clickable((By.XPATH, "//span[contains(., 'Brugerid')]/ancestor::td/following-sibling::td//input[@type='text']"))).clear()
+
+    date_input = wait.until(EC.element_to_be_clickable((By.XPATH, "//span[contains(., 'Registreringsdato')]/ancestor::td/following-sibling::td//input[@type='text']")))
+    date_input.clear()
+    date_input.send_keys(oldest_date.strftime("%d.%m.%Y"))
+
+    ean_input = wait.until(EC.element_to_be_clickable((By.XPATH,"//label[.//span[text()='EAN Nummer']]/following::input[1]")))
+    ean_input.clear()
+    ean_input.send_keys(ean)
+
+    kreditor_input = wait.until(EC.element_to_be_clickable((By.XPATH,"//label[.//span[contains(text(), 'Kreditor')]]/following::input[1]")))
+    kreditor_input.clear()
+    kreditor_input.send_keys("55828415")  # Update if other creditors should be supported
+
+    # Click search
+    wait.until(EC.element_to_be_clickable((By.XPATH, "//div[@title='Klik for at søge (Ctrl+F8)']"))).click()
+    time.sleep(2)
+
+    # Load view
+    wait.until(EC.element_to_be_clickable((By.XPATH, "//input[@title='Load view']"))).click()
+    time.sleep(2)
+    wait.until(EC.element_to_be_clickable((By.XPATH, "//div[@class='lsListbox__value' and normalize-space(text())='Fuld view']"))).click()
+    time.sleep(2)
+
+    # Export to Excel
+    try:
+        wait.until(EC.element_to_be_clickable((By.XPATH, "//div[@title='Eksport']"))).click()
+        wait.until(EC.element_to_be_clickable((By.XPATH, "//tr[@role='menuitem' and .//span[text()='Eksport til Excel']]"))).click()
+    except TimeoutException:
+        print(f"[{dept_name}] Export button not found.")
+        return None
+
+    # Detect and read downloaded Excel
+    timeout = 60
+    polling_interval = 1
+    downloaded_file_path = None
+    before_files = set(os.listdir(downloads_folder))
+
+    for _ in range(timeout):
+        time.sleep(polling_interval)
+        after_files = set(os.listdir(downloads_folder))
+        new_files = {f for f in (after_files - before_files) if f.lower().endswith(".xlsx")}
+        if new_files:
+            newest_file = max(new_files, key=lambda fn: os.path.getmtime(os.path.join(downloads_folder, fn)))
+            downloaded_file_path = os.path.join(downloads_folder, newest_file)
+            break
+
+    if not downloaded_file_path or not os.path.exists(downloaded_file_path):
+        print(f"[{dept_name}] Download failed or file not found.")
+        return None
+
+    df_downloaded = pd.read_excel(downloaded_file_path, engine="openpyxl")
+    os.remove(downloaded_file_path)  # Optional: clean up after read
+
+    # Filter based on references
+    df_filtered = filter_rows_by_references(df_downloaded, refs)
+
+    if df_filtered.empty:
+        print(f"[{dept_name}] No matching rows found after filtering.")
+    else:
+        print(f"[{dept_name}] Filtered down to {len(df_filtered)} rows.")
+
+    return df_filtered
+
+def download_excel_for_ean(ean_number: str, label: str, set_view=True):
+    try:
+        ean_input = wait.until(EC.element_to_be_clickable((By.XPATH, "//input[@title='EAN Nr']")))
+        ean_input.clear()
+        ean_input.send_keys(ean_number)
+        wait.until(EC.element_to_be_clickable((By.XPATH, "//div[@title='Fremfinder de bilag, som opfylder dine søgekriterier (Ctrl+F8)']"))).click()
+        time.sleep(3)
+
+        if set_view:
+            wait.until(EC.element_to_be_clickable((By.XPATH, "//input[@title='Load view']"))).click()
+            time.sleep(2)
+            wait.until(EC.element_to_be_clickable((By.XPATH, "//div[@class='lsListbox__value' and normalize-space(text())='Fuld view']"))).click()
+        time.sleep(2)
+
+        # Wrap export in try-except
+        try:
+            wait.until(EC.element_to_be_clickable((By.XPATH, "//div[@title='Eksport']"))).click()
+            wait.until(EC.element_to_be_clickable((By.XPATH, "//tr[@role='menuitem' and .//span[text()='Eksport til Excel']]"))).click()
+        except TimeoutException:
+            print(f"[{label}] Export button not found. Skipping this table.")
+            return None, None
+
+        before_files = set(os.listdir(downloads_folder))
+        timeout = 90
+        polling_interval = 1
+        elapsed = 0
+        downloaded_file_path = None
+
+        print(f"Waiting for download of {label}...")
+
+        while elapsed < timeout:
+            time.sleep(polling_interval)
+            after_files = set(os.listdir(downloads_folder))
+            new_files = {f for f in (after_files - before_files) if f.lower().endswith(".xlsx")}
+            if new_files:
+                newest_file = max(
+                    new_files,
+                    key=lambda fn: os.path.getmtime(os.path.join(downloads_folder, fn))
+                )
+                downloaded_file_path = os.path.join(downloads_folder, newest_file)
+                try:
+                    df = pd.read_excel(downloaded_file_path, engine='openpyxl')
+                    break
+                except Exception as e:
+                    print(f"Waiting for file to unlock: {e}")
+            elapsed += polling_interval
+
+        if not downloaded_file_path or not os.path.exists(downloaded_file_path):
+            raise FileNotFoundError(f"Download failed or file locked for {label}")
+
+        today_str = datetime.today().strftime("%d.%m.%Y")
+        final_name = f"Bilagsliste_{label}_{today_str}.xlsx"
+        final_path = os.path.join(downloads_folder, final_name)
+        if os.path.exists(final_path):
+            os.remove(final_path)
+        os.rename(downloaded_file_path, final_path)
+        print(f"Downloaded and saved as: {final_path}")
+
+        return df, final_path
+
+    except Exception as e:
+        print(f"[{label}] Error during export: {e}")
+        return None, None
+
+def fetch_azident_for_ean(ean_number: str):
+    with open(sql_file_path, 'r', encoding='cp1252') as file:
+        sql_query = file.read()
+    sql_query = sql_query.replace("'EANNummer'", f"'{ean_number}'")
+    conn = pyodbc.connect(conn_str)
+    cursor = conn.cursor()
+    cursor.execute(sql_query)
+    columns = [col[0] for col in cursor.description]
+    rows = cursor.fetchall()
+    df_result = pd.DataFrame.from_records(rows, columns=columns)
+    cursor.close()
+    conn.close()
+    return df_result
+
+def extract_first_name(text):
+    if not isinstance(text, str):
+        return None
+
+    cleaned = re.sub(r"(?i)(lev\.?\s*ref\.?\s*nr\.?:?|att:)", "", text).strip()
+
+    words = re.findall(r"[A-ZÆØÅa-zæøå]+", cleaned)
+    for word in words:
+        if len(word) > 1 and word.lower() not in DISALLOWED_TERMS:
+            return word
+    return None  
+
+def extract_first_from_kaldenavn(kaldenavn):
+    if not isinstance(kaldenavn, str):
+        return None
+    parts = kaldenavn.strip().split()
+    return parts[0] if parts else None
+
+def process_dataframe(label, df, df_ident):
+    if df is None or df.empty:
+        print(f"DataFrame for {label} is empty. Skipping.")
+        return
+
+    print(f"Processing DataFrame for {label}. Rows: {len(df)}")
+
+    for idx, row in df.iterrows():
+        reg_dato = row.get("Reg.dato")
+        ref_navn = str(row.get("Ref.navn")).strip()
+        faktura_nummer = row.get("Fakturabilag")
+        AktueltBilagsDato = row.get("Bilagsdato")
+        formatted_date = AktueltBilagsDato.strftime("%d.%m.%Y") if pd.notnull(AktueltBilagsDato) else ""
+
+        if pd.notnull(reg_dato) and pd.to_datetime(reg_dato, errors='coerce') > BilagsDato:
+            if ref_navn.lower() not in ("n/a", "nan") and re.match(r'^[\w\s\-\.,:]+$', ref_navn):
+                
+                # First: Try to find an AZ-ident directly in the full ref_navn
+                azid_search = re.search(r'AZ\d{5}', ref_navn)
+                if azid_search:
+                    MedarbejderNavn = azid_search.group(0)  # Extract the full AZ-ident from anywhere in the string
+                    print(f"[{label}] Found AZIdent in Ref.navn: {MedarbejderNavn}")
+                    match = df_ident[df_ident["AZIdent"] == MedarbejderNavn]
+                else:
+                    MedarbejderNavn = extract_first_name(ref_navn)
+                    if not MedarbejderNavn:
+                        continue
+
+                    print(f"[{label}] Looking for Kaldenavn match: {MedarbejderNavn}")
+                    
+                    # Fuzzy match using Levenshtein on first names
+                    def is_first_name_match(medarbejder_navn, kaldenavn):
+                        kalde_first = extract_first_from_kaldenavn(kaldenavn)
+                        #print(f"Full Kaldenavn: '{kaldenavn}', Extracted First Name: '{kalde_first}'")
+                        if not kalde_first:
+                            return False
+                        return Levenshtein.distance(medarbejder_navn.lower(), kalde_first.lower()) <= 1
+
+
+                    fuzzy_matches = df_ident[
+                        df_ident["Kaldenavn"].apply(lambda x: is_first_name_match(MedarbejderNavn, x))
+                    ]
+
+                    if fuzzy_matches.empty:
+                        print(f"[{label}] No fuzzy match for {MedarbejderNavn}")
+                        continue
+
+                    elif len(fuzzy_matches) == 1:
+                        # One match – proceed normally
+                        match = fuzzy_matches
+
+                    else:
+                        # Multiple matches – apply Levenshtein to refine
+                        distances = []
+                        for _, ident_row in fuzzy_matches.iterrows():
+                            kaldenavn = ident_row["Kaldenavn"]
+                            kalde_first = extract_first_from_kaldenavn(kaldenavn)
+                            if kalde_first:
+                                distance = Levenshtein.distance(MedarbejderNavn.lower(), kalde_first.lower())
+                                distances.append((ident_row, distance))
+
+                        min_distance = min(d[1] for d in distances)
+                        best_matches = [row for row, dist in distances if dist == min_distance]
+
+                        if len(best_matches) == 1:
+                            match = pd.DataFrame([best_matches[0]])
+                        else:
+                            # Compare full cleaned names
+                            def cleaned(s): return re.sub(r'\s+', '', s.lower()) if isinstance(s, str) else ''
+                            ref_clean = cleaned(ref_navn)
+                            full_name_matches = [
+                                row for row in best_matches
+                                if cleaned(row["Kaldenavn"]) == ref_clean
+                            ]
+                            if len(full_name_matches) == 1:
+                                match = pd.DataFrame([full_name_matches[0]])
+                            else:
+                                print(f"[{label}] Ambiguous matches for '{MedarbejderNavn}', skipping invoice.")
+                                continue
+
+
+                if match.empty:
+                    print(f"[{label}] Medarbejder not found in Opus: {MedarbejderNavn}")
+                else:
+                    azident = match.iloc[0]["AZIdent"]
+                    print(f"[{label}] AZIDENT for {MedarbejderNavn}: {azident}")
+                        
+                    driver.refresh()
+                    wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "div[title='Min Økonomi']"))).click()
+
+                    try:
+                        wait.until(EC.element_to_be_clickable((By.ID, "subTabIndex2"))).click()
+                    except TimeoutException:
+                        wait.until(EC.element_to_be_clickable((By.XPATH, "//div[contains(text(), 'Bilag og fakturaer')]"))).click()
+                    
+                    
+                    wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "div[title='Bilagsforespørgsel']"))).click()
+
+                    wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "div[title='Søg andre bilag']"))).click()
+                    
+                    wait.until(EC.frame_to_be_available_and_switch_to_it((By.ID, "contentAreaFrame")))
+                    
+                    wait.until(EC.frame_to_be_available_and_switch_to_it((By.NAME, "Søg andre bilag")))
+
+                    fakturabilag_input = wait.until(EC.element_to_be_clickable((By.XPATH,"//label[contains(., 'Fakturabilag')]/following::input[1]")))
+                    fakturabilag_input.clear()
+                    fakturabilag_input.send_keys(faktura_nummer)
+
+                    input_azident = wait.until(EC.element_to_be_clickable((By.XPATH, "//span[contains(., 'Brugerid')]/ancestor::td/following-sibling::td//input[@type='text']")))
+                    input_azident.clear()
+                    #input_azident.send_keys(azident) # Sender ikke keys forci AZID ikke skal indgå i søgningen
+
+                    date_input = wait.until(EC.element_to_be_clickable((By.XPATH,"//span[contains(., 'Registreringsdato')]/ancestor::td/following-sibling::td//input[@type='text']")))
+                    date_input.clear()
+                    date_input.send_keys(formatted_date)  # or whatever date format is expected
+                    
+                    #click søg: 
+                    wait.until(EC.element_to_be_clickable((By.XPATH, "//div[@title='Klik for at søge (Ctrl+F8)']"))).click()
+            
+                    # --- Wait and check for 'ingen data' message ---
+                    time.sleep(5)
+                    if driver.find_elements(By.XPATH, "//span[text()='Tabel indeholder ingen data']"):
+                        print("Kunne ikke finde et bilag")
+                        continue
+                    
+                    #Click videresend: 
+                    wait.until(EC.element_to_be_clickable((By.XPATH, "//div[@title='Videresend']"))).click()
+                    time.sleep(2)
+
+                    # --- Exit both iframes ---
+                    driver.switch_to.default_content()
+
+                    # Now switch to the popup iframe
+                    wait.until(EC.frame_to_be_available_and_switch_to_it((By.ID, "URLSPW-0")))
+
+                    # Continue with interaction in URLSPW-0
+                    next_agent_input = wait.until(EC.element_to_be_clickable((By.XPATH, "//span[contains(text(), 'Næste agent')]/ancestor::td//following::input[@type='text' and contains(@class, 'lsField__input')]")))
+        
+                    next_agent_input.clear()
+                    next_agent_input.send_keys(azident)
+                    
+                    textarea = wait.until(EC.element_to_be_clickable((By.XPATH, "//textarea[@title='Comments for Forwarding']")))
+                    textarea.clear()
+                    textarea.send_keys("Videresendt af Robot")
+
+                    
+                    #wait.until(EC.element_to_be_clickable((By.XPATH, "//span[normalize-space(text())='OK']/ancestor::div[contains(@class, 'lsButton')]"))).click()
+                    wait.until(EC.element_to_be_clickable((By.XPATH, "//span[normalize-space(text())='Annuller']/ancestor::div[contains(@class, 'lsButton')]"))).click()
+
+
+                    time.sleep(2)
+                
+                    # Add AktueltBilagsDato to handled list
+                    if pd.notnull(AktueltBilagsDato):
+                        handled_bilagsdatoer.append(AktueltBilagsDato)
+        else:
+            print("Datoen er overskredet")            
+
+# === 7. Main Automation Flow ===
 try:
     orchestrator_connection.log_info("Navigating to Opus login page")
     driver.get(OpusURL)
     driver.maximize_window()
+
     wait.until(EC.visibility_of_element_located((By.ID, "logonuidfield"))).send_keys(OpusUserName)
     wait.until(EC.visibility_of_element_located((By.ID, "logonpassfield"))).send_keys(OpusPassword)
     wait.until(EC.element_to_be_clickable((By.ID, "buttonLogon"))).click()
 
+    #Login
     try: 
         print("Navigerer til min økonomi")
         wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "div[title='Min Økonomi']"))).click()
@@ -97,7 +503,6 @@ try:
 
         wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "div[title='Min Økonomi']"))).click()
 
-    
     try:
         print("Trying to click using ID...")
         wait.until(EC.element_to_be_clickable((By.ID, "subTabIndex2"))).click()
@@ -112,76 +517,43 @@ try:
     wait.until(EC.frame_to_be_available_and_switch_to_it((By.NAME, "Bilagsindbakke")))
     print("Switched to inner iframe: Bilagsindbakke")
 
-    def download_excel_for_ean(ean_number: str, label: str, set_view=True):
-        try:
-            ean_input = wait.until(EC.element_to_be_clickable((By.XPATH, "//input[@title='EAN Nr']")))
-            ean_input.clear()
-            ean_input.send_keys(ean_number)
-            wait.until(EC.element_to_be_clickable((By.XPATH, "//div[@title='Fremfinder de bilag, som opfylder dine søgekriterier (Ctrl+F8)']"))).click()
-            time.sleep(3)
-
-            if set_view:
-                wait.until(EC.element_to_be_clickable((By.XPATH, "//input[@title='Load view']"))).click()
-                time.sleep(2)
-                wait.until(EC.element_to_be_clickable((By.XPATH, "//div[@class='lsListbox__value' and normalize-space(text())='Fuld view']"))).click()
-            time.sleep(2)
-
-            # Wrap export in try-except
-            try:
-                wait.until(EC.element_to_be_clickable((By.XPATH, "//div[@title='Eksport']"))).click()
-                wait.until(EC.element_to_be_clickable((By.XPATH, "//tr[@role='menuitem' and .//span[text()='Eksport til Excel']]"))).click()
-            except TimeoutException:
-                print(f"[{label}] Export button not found. Skipping this table.")
-                return None, None
-
-            before_files = set(os.listdir(downloads_folder))
-            timeout = 90
-            polling_interval = 1
-            elapsed = 0
-            downloaded_file_path = None
-
-            print(f"Waiting for download of {label}...")
-
-            while elapsed < timeout:
-                time.sleep(polling_interval)
-                after_files = set(os.listdir(downloads_folder))
-                new_files = {f for f in (after_files - before_files) if f.lower().endswith(".xlsx")}
-                if new_files:
-                    newest_file = max(
-                        new_files,
-                        key=lambda fn: os.path.getmtime(os.path.join(downloads_folder, fn))
-                    )
-                    downloaded_file_path = os.path.join(downloads_folder, newest_file)
-                    try:
-                        df = pd.read_excel(downloaded_file_path, engine='openpyxl')
-                        break
-                    except Exception as e:
-                        print(f"Waiting for file to unlock: {e}")
-                elapsed += polling_interval
-
-            if not downloaded_file_path or not os.path.exists(downloaded_file_path):
-                raise FileNotFoundError(f"Download failed or file locked for {label}")
-
-            today_str = datetime.today().strftime("%d.%m.%Y")
-            final_name = f"Bilagsliste_{label}_{today_str}.xlsx"
-            final_path = os.path.join(downloads_folder, final_name)
-            if os.path.exists(final_path):
-                os.remove(final_path)
-            os.rename(downloaded_file_path, final_path)
-            print(f"Downloaded and saved as: {final_path}")
-
-            return df, final_path
-
-        except Exception as e:
-            print(f"[{label}] Error during export: {e}")
-            return None, None
 
     # ---- Download both files and store DataFrames ----
     df_Naturafdelingen, path_Natur = download_excel_for_ean(EAN_Naturafdelingen, "Naturafdelingen", set_view=True)
     df_Vejafdelingen, path_Vej = download_excel_for_ean(EAN_Vejafdelingen, "Vejafdelingen", set_view=False)
 
-    dataframes = []
-    excel_paths = []
+
+
+
+    try:
+        refs_to_find_natur, natur_oldest = check_and_extract_references(df_Naturafdelingen)
+    except Exception as e:
+        refs_to_find_natur, natur_oldest = [], None
+        print(f"Error processing Naturafdelingen references: {e}")
+
+    try:
+        refs_to_find_vej, vej_oldest = check_and_extract_references(df_Vejafdelingen)
+    except Exception as e:
+        refs_to_find_vej, vej_oldest = [], None
+        print(f"Error processing Vejafdelingen references: {e}")
+
+
+    # Combine data into a list of tuples for iteration
+    departments = [
+        ("Naturafdelingen", refs_to_find_natur, natur_oldest,EAN_Naturafdelingen),
+        ("Vejafdelingen", refs_to_find_vej, vej_oldest,EAN_Vejafdelingen)
+    ]
+
+    for dept_name, refs, oldest_date, ean in departments:
+        df_filtered = get_filtered_department_data(driver, wait, dept_name, refs, oldest_date, ean)
+        if df_filtered is not None and not df_filtered.empty:
+            filtered_dfs.append((dept_name, df_filtered))
+
+    # --- Print filtered results ---
+    print("\n--- Filtered DataFrames by Department ---")
+    for name, df in filtered_dfs:
+        print(f"\n{name} - {len(df)} rows:")
+        print(df.head())  # or df.to_string(index=False) for full table
 
     if df_Naturafdelingen is not None:
         dataframes.append(("Naturafdelingen", df_Naturafdelingen))
@@ -197,8 +569,7 @@ try:
     else:
         print("Vejafdelingen eksport blev sprunget over.")
 
-
-    # --- SQL setup ---
+    # Fetch AZIdent data
     conn_str = (
         "DRIVER={ODBC Driver 17 for SQL Server};"
         "SERVER=faellessql;"
@@ -207,229 +578,31 @@ try:
     )
     sql_file_path = 'Get_AZIDENT_NEW.sql'
 
-    def fetch_azident_for_ean(ean_number: str):
-        with open(sql_file_path, 'r', encoding='cp1252') as file:
-            sql_query = file.read()
-        sql_query = sql_query.replace("'EANNummer'", f"'{ean_number}'")
-        conn = pyodbc.connect(conn_str)
-        cursor = conn.cursor()
-        cursor.execute(sql_query)
-        columns = [col[0] for col in cursor.description]
-        rows = cursor.fetchall()
-        df_result = pd.DataFrame.from_records(rows, columns=columns)
-        cursor.close()
-        conn.close()
-        return df_result
-
-    ean_dict = {
-        "Naturafdelingen": EAN_Naturafdelingen,
-        "Vejafdelingen": EAN_Vejafdelingen
-    }
+    # Only fetch SQL data if any of the Excel dataframes have rows
+    has_dataframes_with_rows = any(df is not None and not df.empty for _, df in dataframes)
 
     df_ident_map = {}
-    for label, ean_number in ean_dict.items():
-        print(f"Henter AZIdent data for {label}")
-        df_ident = fetch_azident_for_ean(ean_number)
-        print(f"{label}: {len(df_ident)} rækker hentet fra SQL.")
-        df_ident_map[label] = df_ident
+    if has_dataframes_with_rows:
+        ean_dict = {
+            "Naturafdelingen": EAN_Naturafdelingen,
+            "Vejafdelingen": EAN_Vejafdelingen
+        }
 
-    # ---- 4. Helper to extract first name ----
-    DISALLOWED_TERMS = {
-        "anden", "diverse", "entreprenørenheden", "entreprenørafdelingen",
-        "adm", "adm.", "økonomi", "vejafdelingen", "naturafdelingen",
-        "ikke angivet", "ukendt", "leverandør", "ref.", "faktura", "x", "aarhus", "kommune"
-    }
-
+        for label, ean_number in ean_dict.items():
+            print(f"Henter AZIdent data for {label}")
+            df_ident = fetch_azident_for_ean(ean_number)
+            print(f"{label}: {len(df_ident)} rækker hentet fra SQL.")
+            df_ident_map[label] = df_ident
+    else:
+        print("Ingen data i nogen af Excel-filerne – springer SQL-opslag over.")
     
-    def extract_first_name(text):
-        if not isinstance(text, str):
-            return None
-
-        cleaned = re.sub(r"(?i)(lev\.?\s*ref\.?\s*nr\.?:?|att:)", "", text).strip()
-
-        words = re.findall(r"[A-ZÆØÅa-zæøå]+", cleaned)
-        for word in words:
-            if len(word) > 1 and word.lower() not in DISALLOWED_TERMS:
-                return word
-        return None  
-
-
-    def extract_first_from_kaldenavn(kaldenavn):
-        if not isinstance(kaldenavn, str):
-            return None
-        parts = kaldenavn.strip().split()
-        return parts[0] if parts else None
-    
-    #Sætter bilagsdato list 
-    handled_bilagsdatoer = []
-    
-
-    # --- main processing function updated to accept df_ident ---
-    def process_dataframe(label, df, df_ident):
-        if df is None or df.empty:
-            print(f"DataFrame for {label} is empty. Skipping.")
-            return
-
-        print(f"Processing DataFrame for {label}. Rows: {len(df)}")
-
-        for idx, row in df.iterrows():
-            reg_dato = row.get("Reg.dato")
-            ref_navn = str(row.get("Ref.navn")).strip()
-            faktura_nummer = row.get("Fakturabilag")
-            AktueltBilagsDato = row.get("Bilagsdato")
-            formatted_date = AktueltBilagsDato.strftime("%d.%m.%Y") if pd.notnull(AktueltBilagsDato) else ""
-
-            if pd.notnull(reg_dato) and pd.to_datetime(reg_dato, errors='coerce') > BilagsDato:
-                if ref_navn.lower() not in ("n/a", "nan") and re.match(r'^[\w\s\-\.,:]+$', ref_navn):
-                    
-                    # First: Try to find an AZ-ident directly in the full ref_navn
-                    azid_search = re.search(r'AZ\d{5}', ref_navn)
-                    if azid_search:
-                        MedarbejderNavn = azid_search.group(0)  # Extract the full AZ-ident from anywhere in the string
-                        print(f"[{label}] Found AZIdent in Ref.navn: {MedarbejderNavn}")
-                        match = df_ident[df_ident["AZIdent"] == MedarbejderNavn]
-                    else:
-                        MedarbejderNavn = extract_first_name(ref_navn)
-                        if not MedarbejderNavn:
-                            continue
-
-                        print(f"[{label}] Looking for Kaldenavn match: {MedarbejderNavn}")
-                        
-                        # Fuzzy match using Levenshtein on first names
-                        def is_first_name_match(medarbejder_navn, kaldenavn):
-                            kalde_first = extract_first_from_kaldenavn(kaldenavn)
-                            #print(f"Full Kaldenavn: '{kaldenavn}', Extracted First Name: '{kalde_first}'")
-                            if not kalde_first:
-                                return False
-                            return Levenshtein.distance(medarbejder_navn.lower(), kalde_first.lower()) <= 1
-
-
-                        fuzzy_matches = df_ident[
-                            df_ident["Kaldenavn"].apply(lambda x: is_first_name_match(MedarbejderNavn, x))
-                        ]
-
-                        if fuzzy_matches.empty:
-                            print(f"[{label}] No fuzzy match for {MedarbejderNavn}")
-                            continue
-
-                        elif len(fuzzy_matches) == 1:
-                            # One match – proceed normally
-                            match = fuzzy_matches
-
-                        else:
-                            # Multiple matches – apply Levenshtein to refine
-                            distances = []
-                            for _, ident_row in fuzzy_matches.iterrows():
-                                kaldenavn = ident_row["Kaldenavn"]
-                                kalde_first = extract_first_from_kaldenavn(kaldenavn)
-                                if kalde_first:
-                                    distance = Levenshtein.distance(MedarbejderNavn.lower(), kalde_first.lower())
-                                    distances.append((ident_row, distance))
-
-                            min_distance = min(d[1] for d in distances)
-                            best_matches = [row for row, dist in distances if dist == min_distance]
-
-                            if len(best_matches) == 1:
-                                match = pd.DataFrame([best_matches[0]])
-                            else:
-                                # Compare full cleaned names
-                                def cleaned(s): return re.sub(r'\s+', '', s.lower()) if isinstance(s, str) else ''
-                                ref_clean = cleaned(ref_navn)
-                                full_name_matches = [
-                                    row for row in best_matches
-                                    if cleaned(row["Kaldenavn"]) == ref_clean
-                                ]
-                                if len(full_name_matches) == 1:
-                                    match = pd.DataFrame([full_name_matches[0]])
-                                else:
-                                    print(f"[{label}] Ambiguous matches for '{MedarbejderNavn}', skipping invoice.")
-                                    continue
-
-
-                    if match.empty:
-                        print(f"[{label}] Medarbejder not found in Opus: {MedarbejderNavn}")
-                    else:
-                        azident = match.iloc[0]["AZIdent"]
-                        print(f"[{label}] AZIDENT for {MedarbejderNavn}: {azident}")
-                            
-                        driver.refresh()
-                        wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "div[title='Min Økonomi']"))).click()
-
-                        try:
-                            wait.until(EC.element_to_be_clickable((By.ID, "subTabIndex2"))).click()
-                        except TimeoutException:
-                            wait.until(EC.element_to_be_clickable((By.XPATH, "//div[contains(text(), 'Bilag og fakturaer')]"))).click()
-                        
-                        
-                        wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "div[title='Bilagsforespørgsel']"))).click()
-
-                        wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "div[title='Søg andre bilag']"))).click()
-                        
-                        wait.until(EC.frame_to_be_available_and_switch_to_it((By.ID, "contentAreaFrame")))
-                        
-                        wait.until(EC.frame_to_be_available_and_switch_to_it((By.NAME, "Søg andre bilag")))
-
-                        fakturabilag_input = wait.until(EC.element_to_be_clickable((By.XPATH,"//label[contains(., 'Fakturabilag')]/following::input[1]")))
-                        fakturabilag_input.clear()
-                        fakturabilag_input.send_keys(faktura_nummer)
-
-                        input_azident = wait.until(EC.element_to_be_clickable((By.XPATH, "//span[contains(., 'Brugerid')]/ancestor::td/following-sibling::td//input[@type='text']")))
-                        input_azident.clear()
-                        #input_azident.send_keys(azident) # Sender ikke keys forci AZID ikke skal indgå i søgningen
-
-                        date_input = wait.until(EC.element_to_be_clickable((By.XPATH,"//span[contains(., 'Registreringsdato')]/ancestor::td/following-sibling::td//input[@type='text']")))
-                        date_input.clear()
-                        date_input.send_keys(formatted_date)  # or whatever date format is expected
-                        
-                        #click søg: 
-                        wait.until(EC.element_to_be_clickable((By.XPATH, "//div[@title='Klik for at søge (Ctrl+F8)']"))).click()
-                
-                        # --- Wait and check for 'ingen data' message ---
-                        time.sleep(5)
-                        if driver.find_elements(By.XPATH, "//span[text()='Tabel indeholder ingen data']"):
-                            print("Kunne ikke finde et bilag")
-                            continue
-                        
-                        #Click videresend: 
-                        wait.until(EC.element_to_be_clickable((By.XPATH, "//div[@title='Videresend']"))).click()
-                        time.sleep(2)
-
-                        # --- Exit both iframes ---
-                        driver.switch_to.default_content()
-
-                        # Now switch to the popup iframe
-                        wait.until(EC.frame_to_be_available_and_switch_to_it((By.ID, "URLSPW-0")))
-
-                        # Continue with interaction in URLSPW-0
-                        next_agent_input = wait.until(EC.element_to_be_clickable((By.XPATH, "//span[contains(text(), 'Næste agent')]/ancestor::td//following::input[@type='text' and contains(@class, 'lsField__input')]")))
-            
-                        next_agent_input.clear()
-                        next_agent_input.send_keys(azident)
-                        
-                        textarea = wait.until(EC.element_to_be_clickable((By.XPATH, "//textarea[@title='Comments for Forwarding']")))
-                        textarea.clear()
-                        textarea.send_keys("Videresendt af Robot")
-
-                        
-                        #wait.until(EC.element_to_be_clickable((By.XPATH, "//span[normalize-space(text())='OK']/ancestor::div[contains(@class, 'lsButton')]"))).click()
-                        wait.until(EC.element_to_be_clickable((By.XPATH, "//span[normalize-space(text())='Annuller']/ancestor::div[contains(@class, 'lsButton')]"))).click()
-
-
-                        time.sleep(2)
-                    
-                        # Add AktueltBilagsDato to handled list
-                        if pd.notnull(AktueltBilagsDato):
-                            handled_bilagsdatoer.append(AktueltBilagsDato)
-            else:
-                print("Datoen er overskredet")            
-
 
     # --- execute processing with correct df_ident ---
     for label, df in dataframes:
         df_ident = df_ident_map.get(label)
         process_dataframe(label, df, df_ident)
 
-    # 6. Slet excel filer
+    # Cleanup
     for file_path in excel_paths:
         try:
             if os.path.exists(file_path):
@@ -440,8 +613,7 @@ try:
         except Exception as e:
             print(f"Error deleting {file_path}: {e}")
 
-
-# 7. Sæt ny bilagsdato hvis der er håndterede bilag – og find max dato i begge Excel-filer
+    # Update Bilagsdato
     if handled_bilagsdatoer:
         all_bilagsdatoer = []
 
