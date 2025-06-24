@@ -109,17 +109,22 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
                 time.sleep(polling_interval)
                 after_files = set(os.listdir(downloads_folder))
                 new_files = {f for f in (after_files - before_files) if f.lower().endswith(".xlsx")}
+
                 if new_files:
                     newest_file = max(
                         new_files,
                         key=lambda fn: os.path.getmtime(os.path.join(downloads_folder, fn))
                     )
                     downloaded_file_path = os.path.join(downloads_folder, newest_file)
-                    try:
-                        df = pd.read_excel(downloaded_file_path, engine='openpyxl')
-                        break
-                    except Exception as e:
-                        print(f"Waiting for file to unlock: {e}")
+
+                    # Check if a .crdownload file exists with the same name prefix
+                    partial_file = downloaded_file_path + ".crdownload"
+                    if not os.path.exists(partial_file):
+                        try:
+                            df = pd.read_excel(downloaded_file_path, engine='openpyxl')
+                            break
+                        except Exception as e:
+                            print(f"Waiting for file to unlock: {e}")
                 elapsed += polling_interval
 
             if not downloaded_file_path or not os.path.exists(downloaded_file_path):
