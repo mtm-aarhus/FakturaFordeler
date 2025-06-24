@@ -80,6 +80,7 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
         try:
             ean_input = wait.until(EC.element_to_be_clickable((By.XPATH, "//input[@title='EAN Nr']")))
             ean_input.clear()
+            time.sleep(1)
             ean_input.send_keys(ean_number)
             wait.until(EC.element_to_be_clickable((By.XPATH, "//div[@title='Fremfinder de bilag, som opfylder dine søgekriterier (Ctrl+F8)']"))).click()
             time.sleep(3)
