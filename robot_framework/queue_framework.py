@@ -13,6 +13,7 @@ from robot_framework import reset
 from robot_framework.exceptions import handle_error, BusinessError, log_exception
 from robot_framework import process
 from robot_framework import config
+import time  # Optional: for adding delay between retries
 
 
 def main():
@@ -26,6 +27,7 @@ def main():
     queue_element = None
     error_count = 0
     task_count = 0
+    max_retries = 1  # Number of retries
     # Retry loop
     for _ in range(config.MAX_RETRY_COUNT):
         try:
@@ -41,7 +43,20 @@ def main():
                     break  # Break queue loop
 
                 try:
-                    process.process(orchestrator_connection, queue_element)
+                    for attempt in range(1, max_retries + 1):
+                        try:
+                            process.process(orchestrator_connection, queue_element)
+                            print("Operation succeeded!")
+                            break  # Exit the loop if successful
+                        except Exception as e:
+                            print(f"Attempt {attempt} failed: {e}")
+                            if attempt < max_retries:
+                                time.sleep(1)  # Optional: delay before retrying
+                                print("Retrying...")
+                            else:
+                                print("Operation failed after 2 attempts.")
+                                raise
+                    
                     orchestrator_connection.set_queue_element_status(queue_element.id, QueueStatus.DONE)
 
                 except BusinessError as error:
