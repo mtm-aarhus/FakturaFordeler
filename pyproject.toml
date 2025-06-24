@@ -22,6 +22,7 @@ dependencies = [
     "selenium == 4.33.0",
     "pyodbc == 5.2.0",
     "python-Levenshtein == 0.27.1"
+    "openpyxl == 3.1.5"
 ]
 
 [project.optional-dependencies]
