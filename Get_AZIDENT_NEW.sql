@@ -8,5 +8,5 @@ SELECT
 FROM [Opus].[intdebitor].[InterneDebitorer_BrugerInfo] a
 JOIN [Opus].[brugerstyring].[BRS_GodkenderBeløb] b
     ON a.[AZIdent] = b.[Ident]
-Where a.[EANnedarvet] LIKE 'EANNummer' 
+WHERE a.[EANnedarvet] LIKE 'EANVEJ' OR a.[EANnedarvet] LIKE 'EANNATUR'
 
