@@ -18,14 +18,14 @@ classifiers = [
 dependencies = [
     "OpenOrchestrator == 1.*",
     "Pillow == 10.*",
+    "pandas==2.2.3",
+    "selenium == 4.33.0",
+    "pyodbc == 5.2.0",
+    "python-Levenshtein == 0.27.1"
 ]
 
 [project.optional-dependencies]
 dev = [
   "pylint",
-  "flake8",
-  "pandas",
-  "selenium",
-  "pyodbc",
-  "python-Levenshtein"
+  "flake8"
 ]
