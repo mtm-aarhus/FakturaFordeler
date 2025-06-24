@@ -416,6 +416,7 @@ def process_dataframe(label, df, df_ident, col_ref_navn="Ref.navn", col_bilagsda
                     wait.until(EC.element_to_be_clickable((By.XPATH, "//span[normalize-space(text())='Annuller']/ancestor::div[contains(@class, 'lsButton')]"))).click()
 
                     #Mangler at trykke send
+                    #wait.until(EC.element_to_be_clickable((By.XPATH, "//span[normalize-space(text())='OK']/ancestor::div[contains(@class, 'lsButton')]"))).click()
 
                     time.sleep(2)
                     if pd.notnull(AktueltBilagsDato):
