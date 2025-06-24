@@ -52,6 +52,7 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
     options.add_argument("--disable-extensions")
     options.add_argument("--remote-debugging-pipe")
     options.add_argument("--disable-features=WebUsb")
+    options.add_argument("--log-level=3")
 
     chrome_service = Service()
     for attempt in range(1, max_retries + 1):
@@ -82,6 +83,7 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
             ean_input.clear()
             time.sleep(1)
             ean_input.send_keys(ean_number)
+            time.sleep(3)
             wait.until(EC.element_to_be_clickable((By.XPATH, "//div[@title='Fremfinder de bilag, som opfylder dine søgekriterier (Ctrl+F8)']"))).click()
             time.sleep(3)
 
