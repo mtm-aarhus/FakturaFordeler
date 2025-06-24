@@ -15,6 +15,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
 from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import StaleElementReferenceException
 import pyodbc
 import re
 import Levenshtein
@@ -76,6 +77,20 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
     excel_paths = []
     handled_bilagsdatoer = []
 
+    def safe_click(wait, by, value, retries=3):
+        for attempt in range(retries):
+            try:
+                elem = wait.until(EC.element_to_be_clickable((by, value)))
+                elem.click()
+                return True
+            except StaleElementReferenceException:
+                print(f"Stale element encountered. Retrying ({attempt + 1}/{retries})...")
+                time.sleep(1)
+        print("Failed to click element after retries.")
+        return False
+
+
+
     # === 6. Define Utility and Processing Functions ===
     def download_excel_for_ean(ean_number: str, label: str, set_view=True):
         try:
@@ -95,10 +110,12 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
 
             # Wrap export in try-except
             try:
-                wait.until(EC.element_to_be_clickable((By.XPATH, "//div[@title='Eksport']"))).click()
-                wait.until(EC.element_to_be_clickable((By.XPATH, "//tr[@role='menuitem' and .//span[text()='Eksport til Excel']]"))).click()
+                if not safe_click(wait, By.XPATH, "//div[@title='Eksport']"):
+                    raise TimeoutException("Failed to click 'Eksport'")
+                if not safe_click(wait, By.XPATH, "//tr[@role='menuitem' and .//span[text()='Eksport til Excel']]"):
+                    raise TimeoutException("Failed to click 'Eksport til Excel'")
             except TimeoutException:
-                print(f"[{label}] Export button not found. Skipping this table.")
+                print(f"[{label}] Export button not found or stale. Skipping this table.")
                 return None, None
 
             before_files = set(os.listdir(downloads_folder))
