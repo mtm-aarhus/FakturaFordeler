@@ -533,7 +533,7 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
 
         # ---- Download both files and store DataFrames ----
         df_Naturafdelingen, path_Natur = download_excel_for_ean(EAN_Naturafdelingen, "Naturafdelingen", set_view=True)
-        df_Vejafdelingen, path_Vej = download_excel_for_ean(EAN_Vejafdelingen, "Vejafdelingen", set_view=False)
+        df_Vejafdelingen, path_Vej = download_excel_for_ean(EAN_Vejafdelingen, "Vejafdelingen", set_view=True)
 
 
         try:

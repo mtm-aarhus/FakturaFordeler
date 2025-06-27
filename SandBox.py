@@ -85,6 +85,7 @@ def download_excel_for_ean(ean_number: str, label: str, set_view=True):
         wait.until(EC.element_to_be_clickable((By.XPATH, "//div[@title='Fremfinder de bilag, som opfylder dine søgekriterier (Ctrl+F8)']"))).click()
         time.sleep(3)
 
+        
         if set_view:
             wait.until(EC.element_to_be_clickable((By.XPATH, "//input[@title='Load view']"))).click()
             time.sleep(2)
@@ -128,10 +129,10 @@ def download_excel_for_ean(ean_number: str, label: str, set_view=True):
         today_str = datetime.today().strftime("%d.%m.%Y")
         final_name = f"Bilagsliste_{label}_{today_str}.xlsx"
         final_path = os.path.join(downloads_folder, final_name)
-        if os.path.exists(final_path):
-            os.remove(final_path)
-        os.rename(downloaded_file_path, final_path)
-        print(f"Downloaded and saved as: {final_path}")
+        # if os.path.exists(final_path):
+        #     os.remove(final_path)
+        # os.rename(downloaded_file_path, final_path)
+        # print(f"Downloaded and saved as: {final_path}")
 
         return df, final_path
 
@@ -245,7 +246,7 @@ def get_filtered_department_data(driver, wait, dept_name, refs, oldest_date, ean
         return None
 
     df_downloaded = pd.read_excel(downloaded_file_path, engine="openpyxl")
-    os.remove(downloaded_file_path)  # Optional: clean up after read
+    # os.remove(downloaded_file_path)  # Optional: clean up after read
 
     # Determine correct reference column
     if "Reference" in df_downloaded.columns:
@@ -509,7 +510,7 @@ try:
 
     # ---- Download both files and store DataFrames ----
     df_Naturafdelingen, path_Natur = download_excel_for_ean(EAN_Naturafdelingen, "Naturafdelingen", set_view=True)
-    df_Vejafdelingen, path_Vej = download_excel_for_ean(EAN_Vejafdelingen, "Vejafdelingen", set_view=False)
+    df_Vejafdelingen, path_Vej = download_excel_for_ean(EAN_Vejafdelingen, "Vejafdelingen", set_view=True)
 
 
     try:
@@ -603,7 +604,8 @@ try:
     for file_path in excel_paths:
         try:
             if os.path.exists(file_path):
-                os.remove(file_path)
+                # os.remove(file_path)
+                print("Reast")
             else:
                 print(f"File not found (already removed or never downloaded): {file_path}")
         except Exception as e:
