@@ -67,14 +67,6 @@ Deletes downloaded files and updates the `Bilagsdato` constant.
 
 ---
 
-## 💡 Future Improvements
-
-✅ Automated error reporting to monitoring dashboards  
-✅ Retry logic for SQL and downloads  
-🔄 Parallel processing of departments to improve speed  
-
----
-
 ## 👷 Maintainer
 
 Gustav Chatterton  
