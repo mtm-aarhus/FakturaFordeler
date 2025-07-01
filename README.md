@@ -1,61 +1,81 @@
-# Robot-Framework V3
 
-This repo is meant to be used as a template for robots made for [OpenOrchestrator](https://github.com/itk-dev-rpa/OpenOrchestrator).
+# 📄 README
 
-## Quick start
+## Opus Invoice Robot
 
-1. To use this template simply use this repo as a template (see [Creating a repository from a template](https://docs.github.com/en/repositories/creating-and-managing-repositories/creating-a-repository-from-a-template)).
-__Don't__ include all branches.
+**Opus Invoice Robot** is an automation developed for **Aarhus Kommune**. It streamlines the processing, matching, and forwarding of supplier invoices in the Opus system, reducing manual effort and improving traceability.
 
-2. Go to `robot_framework/__main__.py` and choose between the linear framework or queue based framework.
+---
 
-3. Implement all functions in the files:
-    * `robot_framework/initialize.py`
-    * `robot_framework/reset.py`
-    * `robot_framework/process.py`
+## 🚀 Features
 
-4. Change `config.py` to your needs.
+✅ **Automated Login & Credential Management**  
+Logs in to Opus via Selenium and updates expired passwords automatically in OpenOrchestrator.
 
-5. Fill out the dependencies in the `pyproject.toml` file with all packages needed by the robot.
+📥 **Download Invoice Lists**  
+Fetches Excel reports for Naturafdelingen and Vejafdelingen EAN numbers.
 
-6. Feel free to add more files as needed. Remember that any additional python files must
-be located in the folder `robot_framework` or a subfolder of it.
+🧾 **Extract and Filter References**  
+Parses invoice references and dates, filtering by creditor and date.
 
-When the robot is run from OpenOrchestrator the `main.py` file is run which results
-in the following:
-1. The working directory is changed to where `main.py` is located.
-2. A virtual environment is automatically setup with the required packages.
-3. The framework is called passing on all arguments needed by [OpenOrchestrator](https://github.com/itk-dev-rpa/OpenOrchestrator).
+🔍 **Match Invoices to Employees**  
+Queries AZIdent mappings from SQL Server and uses Levenshtein distance for fuzzy matching.
 
-## Requirements
-Minimum python version 3.10
+📡 **Forward Invoices in Opus**  
+Navigates to each invoice in Opus and forwards it to the responsible employee.
 
-## Flow
+🗑️ **Cleanup and State Update**  
+Deletes downloaded files and updates the `Bilagsdato` constant.
 
-This framework contains two different flows: A linear and a queue based.
-You should only ever use one at a time. You choose which one by going into `robot_framework/__main__.py`
-and uncommenting the framework you want. They are both disabled by default and an error will be
-raised to remind you if you don't choose.
+---
 
-### Linear Flow
+## 🧭 Process Flow
 
-The linear framework is used when a robot is just going from A to Z without fetching jobs from an
-OpenOrchestrator queue.
-The flow of the linear framework is sketched up in the following illustration:
+1. Fetch credentials and constants from OpenOrchestrator
+2. Initialize ChromeDriver (Selenium)
+3. Log in to Opus  
+   - If password expired, generate and save a new one
+4. Download invoice Excel files for each department
+5. Extract invoice references and oldest registration dates
+6. If references exist:
+   - Search Opus and export supplementary Stark data
+7. Query SQL Server for AZIdent mappings
+8. Match invoices to employees
+   - Fuzzy match names if AZ-identifiers are missing
+9. Forward invoices to responsible employees
+10. Remove temporary files
+11. Update `Bilagsdato`
 
-![Linear Flow diagram](Robot-Framework.svg)
+---
 
-### Queue Flow
+## 🔐 Privacy & Security
 
-The queue framework is used when the robot is doing multiple bite-sized tasks defined in an
-OpenOrchestrator queue.
-The flow of the queue framework is sketched up in the following illustration:
+- All interactions occur over HTTPS
+- Credentials are stored securely in OpenOrchestrator
+- No sensitive data is persisted beyond processing
+- Temporary files are removed after use
 
-![Queue Flow diagram](Robot-Queue-Framework.svg)
+---
 
-## Linting and Github Actions
+## ⚙️ Dependencies
 
-This template is also setup with flake8 and pylint linting in Github Actions.
-This workflow will trigger whenever you push your code to Github.
-The workflow is defined under `.github/workflows/Linting.yml`.
+- Python 3.10+
+- Selenium
+- pandas
+- pyodbc
+- python-Levenshtein
 
+---
+
+## 💡 Future Improvements
+
+✅ Automated error reporting to monitoring dashboards  
+✅ Retry logic for SQL and downloads  
+🔄 Parallel processing of departments to improve speed  
+
+---
+
+## 👷 Maintainer
+
+Gustav Chatterton  
+*Digital udvikling, Teknik og Miljø, Aarhus Kommune*
