@@ -200,7 +200,7 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
     def get_filtered_department_data(driver, wait, dept_name, refs, oldest_date, ean):
         if not refs:
             return None
-
+        driver.switch_to.default_content()
         print(f"[{dept_name}] Refreshing and navigating to search page...")
         driver.refresh()
         wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "div[title='Min Økonomi']"))).click()
