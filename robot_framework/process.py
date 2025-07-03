@@ -105,11 +105,32 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
             wait.until(EC.element_to_be_clickable((By.XPATH, "//div[@title='Fremfinder de bilag, som opfylder dine søgekriterier (Ctrl+F8)']"))).click()
             time.sleep(3)
 
+
             if set_view:
-                wait.until(EC.element_to_be_clickable((By.XPATH, "//input[@title='Load view']"))).click()
-                time.sleep(2)
-                wait.until(EC.element_to_be_clickable((By.XPATH, "//div[@class='lsListbox__value' and normalize-space(text())='Fuld view']"))).click()
+                # Find the "Load view" input
+                current_view = wait.until(EC.visibility_of_element_located((By.XPATH, "//input[@title='Load view']")))
+                # Read its current value
+                current_view_value = current_view.get_attribute("value").strip()
+                print("Current view:", current_view_value)
+            
+                if current_view_value != "Fuld view":
+                    # Only switch if not already set
+                    current_view.click()
+                    time.sleep(2)
+            
+                    # Wait for and click "Fuld view"
+                    wait.until(EC.element_to_be_clickable((By.XPATH, "//div[@class='lsListbox__value' and normalize-space(text())='Fuld view']"))).click()
+                    time.sleep(2)
+                else:
+                    print("Fuld view already active, skipping view change.")
+            
+            # Always wait a little to let the view load
             time.sleep(2)
+
+
+
+
+            
 
             # Wrap export in try-except
             try:
