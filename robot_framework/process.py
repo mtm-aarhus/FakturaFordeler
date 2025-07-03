@@ -94,9 +94,10 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
     # === 6. Define Utility and Processing Functions ===
     def download_excel_for_ean(ean_number: str, label: str, set_view=True):
         try:
+            time.sleep(2)
             ean_input = wait.until(EC.element_to_be_clickable((By.XPATH, "//input[@title='EAN Nr']")))
             ean_input.clear()
-            time.sleep(1)
+            time.sleep(3)
             ean_input.send_keys(ean_number)
             time.sleep(3)
             wait.until(EC.element_to_be_clickable((By.XPATH, "//div[@title='Fremfinder de bilag, som opfylder dine søgekriterier (Ctrl+F8)']"))).click()
