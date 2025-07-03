@@ -97,6 +97,7 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
             time.sleep(2)
             ean_input = wait.until(EC.element_to_be_clickable((By.XPATH, "//input[@title='EAN Nr']")))
             ean_input.clear()
+            print(f"Indtaster ean: {ean_number}")
             # Wait until the input is really empty (not auto-filled again)
             wait.until(lambda driver: ean_input.get_attribute("value") == "")
             ean_input.send_keys(ean_number)
