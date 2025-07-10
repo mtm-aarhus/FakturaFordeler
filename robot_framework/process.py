@@ -94,19 +94,43 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
     # === 6. Define Utility and Processing Functions ===
     def download_excel_for_ean(ean_number: str, label: str, set_view=True):
         try:
+            time.sleep(2)
             ean_input = wait.until(EC.element_to_be_clickable((By.XPATH, "//input[@title='EAN Nr']")))
             ean_input.clear()
-            time.sleep(1)
+            print(f"Indtaster ean: {ean_number}")
+            # Wait until the input is really empty (not auto-filled again)
+            wait.until(lambda driver: ean_input.get_attribute("value") == "")
             ean_input.send_keys(ean_number)
             time.sleep(3)
             wait.until(EC.element_to_be_clickable((By.XPATH, "//div[@title='Fremfinder de bilag, som opfylder dine søgekriterier (Ctrl+F8)']"))).click()
             time.sleep(3)
 
+
             if set_view:
-                wait.until(EC.element_to_be_clickable((By.XPATH, "//input[@title='Load view']"))).click()
-                time.sleep(2)
-                wait.until(EC.element_to_be_clickable((By.XPATH, "//div[@class='lsListbox__value' and normalize-space(text())='Fuld view']"))).click()
+                # Find the "Load view" input
+                current_view = wait.until(EC.visibility_of_element_located((By.XPATH, "//input[@title='Load view']")))
+                # Read its current value
+                current_view_value = current_view.get_attribute("value").strip()
+                print("Current view:", current_view_value)
+            
+                if current_view_value != "Fuld view":
+                    # Only switch if not already set
+                    current_view.click()
+                    time.sleep(2)
+            
+                    # Wait for and click "Fuld view"
+                    wait.until(EC.element_to_be_clickable((By.XPATH, "//div[@class='lsListbox__value' and normalize-space(text())='Fuld view']"))).click()
+                    time.sleep(2)
+                else:
+                    print("Fuld view already active, skipping view change.")
+            
+            # Always wait a little to let the view load
             time.sleep(2)
+
+
+
+
+            
 
             # Wrap export in try-except
             try:
@@ -201,7 +225,7 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
     def get_filtered_department_data(driver, wait, dept_name, refs, oldest_date, ean):
         if not refs:
             return None
-
+        driver.switch_to.default_content()
         print(f"[{dept_name}] Refreshing and navigating to search page...")
         driver.refresh()
         wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "div[title='Min Økonomi']"))).click()
@@ -441,7 +465,6 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
 
                         #wait.until(EC.element_to_be_clickable((By.XPATH, "//span[normalize-space(text())='Annuller']/ancestor::div[contains(@class, 'lsButton')]"))).click()
 
-                        #Mangler at trykke send
                         wait.until(EC.element_to_be_clickable((By.XPATH, "//span[normalize-space(text())='OK']/ancestor::div[contains(@class, 'lsButton')]"))).click()
 
                         time.sleep(2)
