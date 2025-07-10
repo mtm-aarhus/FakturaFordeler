@@ -676,7 +676,7 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
 
             if all_bilagsdatoer:
                 ny_bilagsdato = max(all_bilagsdatoer)
-                orchestrator_connection.update_constant("Bilagsdato", ny_bilagsdato.strftime("%d-%m-%Y"))
+                #orchestrator_connection.update_constant("Bilagsdato", ny_bilagsdato.strftime("%d-%m-%Y"))
                 print(f"Opdateret Bilagsdato til: {ny_bilagsdato.strftime('%d-%m-%Y')} baseret på Excel-data.")
             else:
                 print("Excel-filerne indeholdt ingen gyldige bilagsdatoer – Bilagsdato ikke opdateret.")
