@@ -156,6 +156,7 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
                 os.remove(final_path)
             os.rename(downloaded_file_path, final_path)
             print(f"Downloaded and saved as: {final_path}")
+            time.sleep(7)
 
             return df, final_path
 
@@ -269,6 +270,7 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
             return None
 
         df_downloaded = pd.read_excel(downloaded_file_path, engine="openpyxl")
+        time.sleep(7)
         os.remove(downloaded_file_path)  # Optional: clean up after read
 
         # Determine correct reference column
