@@ -128,8 +128,6 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
             time.sleep(2)
 
 
-
-
             
 
             # Wrap export in try-except
@@ -466,8 +464,27 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
                         #wait.until(EC.element_to_be_clickable((By.XPATH, "//span[normalize-space(text())='Annuller']/ancestor::div[contains(@class, 'lsButton')]"))).click()
 
                         wait.until(EC.element_to_be_clickable((By.XPATH, "//span[normalize-space(text())='OK']/ancestor::div[contains(@class, 'lsButton')]"))).click()
-
                         time.sleep(2)
+                        # Log info
+                        
+                        orchestrator_connection.log_info(f"Faktura: {faktura_nummer} er videresendt til {azident} d. {formatted_date}")
+
+                        # Save to database
+                        try:
+                            conn = pyodbc.connect("DRIVER={ODBC Driver 17 for SQL Server};SERVER=srvsql29;DATABASE=PyOrchestrator;Trusted_Connection=yes")
+                            cursor = conn.cursor()
+                            insert_query = """
+                                INSERT INTO FakturaFordeler (Fakturanummer, AzIdent, Dato)
+                                VALUES (?, ?, ?)
+                            """
+                            cursor.execute(insert_query, faktura_nummer, azident, AktueltBilagsDato.date())
+                            conn.commit()
+                            cursor.close()
+                            conn.close()
+                        except Exception as db_error:
+                            orchestrator_connection.log_info(f"Database log failed for Faktura {faktura_nummer}: {db_error}")
+
+
                         if pd.notnull(AktueltBilagsDato):
                             handled_bilagsdatoer.append(AktueltBilagsDato)
             else:
