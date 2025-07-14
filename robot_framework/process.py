@@ -449,7 +449,7 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
                             continue
                         
                         wait.until(EC.element_to_be_clickable((By.XPATH, "//div[@title='Videresend']"))).click()
-                        time.sleep(2)
+                        time.sleep(5)
                         driver.switch_to.default_content()
                         wait.until(EC.frame_to_be_available_and_switch_to_it((By.ID, "URLSPW-0")))
 
