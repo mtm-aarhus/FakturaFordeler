@@ -578,7 +578,7 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
         wait.until(EC.frame_to_be_available_and_switch_to_it((By.NAME, "Bilagsindbakke")))
         print("Switched to inner iframe: Bilagsindbakke")
 
-
+        time.sleep(5)
         # ---- Download both files and store DataFrames ----
         df_Naturafdelingen, path_Natur = download_excel_for_ean(EAN_Naturafdelingen, "Naturafdelingen", set_view=True)
         df_Vejafdelingen, path_Vej = download_excel_for_ean(EAN_Vejafdelingen, "Vejafdelingen", set_view=True)
