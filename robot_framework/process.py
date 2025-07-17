@@ -707,6 +707,9 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
         print(f"An error occurred: {e}")
         driver.quit()
         raise e
+    
+    finally:
+    driver.quit()
 
 
 
