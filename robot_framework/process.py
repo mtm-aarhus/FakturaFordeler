@@ -712,9 +712,5 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
     finally:
         driver.quit()
 
-     finally:
-        driver.quit()
-
-
 
 
