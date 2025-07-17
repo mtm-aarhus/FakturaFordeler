@@ -19,6 +19,7 @@ from selenium.common.exceptions import StaleElementReferenceException
 import pyodbc
 import re
 import Levenshtein
+from selenium.webdriver.common.keys import Keys
 
 # pylint: disable-next=unused-argument
 def process(orchestrator_connection: OrchestratorConnection, queue_element: QueueElement | None = None) -> None:
@@ -98,6 +99,9 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
             time.sleep(2)
             ean_input = wait.until(EC.element_to_be_clickable((By.XPATH, "//input[@title='EAN Nr']")))
             ean_input.clear()
+            time.sleep(2)
+            ean_input.send_keys(Keys.CONTROL + "a")
+            ean_input.send_keys(Keys.DELETE)
             print(f"Indtaster ean: {ean_number}")
             # Wait until the input is really empty (not auto-filled again)
             wait.until(lambda driver: ean_input.get_attribute("value") == "")
