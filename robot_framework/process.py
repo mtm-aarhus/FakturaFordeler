@@ -601,6 +601,7 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
         df_Stark_Vejafdelingen = None
 
         for dept_name, refs, oldest_date, ean in departments:
+            print(f"Processing department: {dept_name}, using EAN: {ean}")
             df_filtered = get_filtered_department_data(driver, wait, dept_name, refs, oldest_date, ean)
             if df_filtered is not None and not df_filtered.empty:
                 if dept_name == "Naturafdelingen":
@@ -708,7 +709,8 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
         driver.quit()
         raise e
 
-
+     finally:
+        driver.quit()
 
 
 
