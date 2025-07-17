@@ -55,7 +55,7 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
     options.add_argument("--remote-debugging-pipe")
     options.add_argument("--disable-features=WebUsb")
     options.add_argument("--log-level=3")
-    options.add_argument("--incognito")
+    #options.add_argument("--incognito")
 
     chrome_service = Service()
     for attempt in range(1, max_retries + 1):
