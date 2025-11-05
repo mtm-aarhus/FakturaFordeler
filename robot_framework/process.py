@@ -568,7 +568,7 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
             wait.until(EC.visibility_of_element_located((By.NAME, "j_sap_again"))).send_keys(password)
             wait.until(EC.element_to_be_clickable((By.ID, "changeButton"))).click()
 
-            orchestrator_connection.update_credential('OpusRobotBruger', OpusUserName, password)
+            orchestrator_connection.update_credential('OpusLoginFaktura', OpusUserName, password)
             orchestrator_connection.log_info('Password changed and credential updated')
             print(password)
             time.sleep(2)
