@@ -33,8 +33,8 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
     }
     max_retries = 3
 
-    OpusLogin = orchestrator_connection.get_credential("OpusRobotBruger")
-    #OpusLogin = orchestrator_connection.get_credential("OpusLoginFaktura")
+    # OpusLogin = orchestrator_connection.get_credential("OpusRobotBruger")
+    OpusLogin = orchestrator_connection.get_credential("OpusLoginFaktura")
     OpusUserName = OpusLogin.username
     OpusPassword = OpusLogin.password
     OpusURL = orchestrator_connection.get_constant("OpusAdgangUrl").value
