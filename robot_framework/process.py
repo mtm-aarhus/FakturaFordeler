@@ -1,5 +1,3 @@
-"""This module contains the main process of the robot."""
-
 from OpenOrchestrator.orchestrator_connection.connection import OrchestratorConnection
 from OpenOrchestrator.database.queues import QueueElement
 import os
@@ -74,7 +72,6 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
     wait = WebDriverWait(driver, 100)
     print("ChromeDriver initialized successfully.")
 
-
     # === 5. Initialize Working Variables ===
     dataframes = []
     excel_paths = []
@@ -91,8 +88,6 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
                 time.sleep(1)
         print("Failed to click element after retries.")
         return False
-
-
 
     # === 6. Define Utility and Processing Functions ===
     def download_excel_for_ean(ean_number: str, label: str, set_view=True):
@@ -373,49 +368,65 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
                             continue
 
                         print(f"[{label}] Looking for Kaldenavn match: {MedarbejderNavn}")
-                        
-                        def is_first_name_match(medarbejder_navn, kaldenavn):
-                            kalde_first = extract_first_from_kaldenavn(kaldenavn)
-                            if not kalde_first:
-                                return False
-                            dist = Levenshtein.distance(medarbejder_navn.lower(), kalde_first.lower())
-                            return dist <= 2
+                        exact_matches = df_ident[df_ident["Kaldenavn"].fillna("").str.lower().str.strip() == ref_navn.lower().strip()]
 
-                        fuzzy_matches = df_ident[
-                            df_ident["Kaldenavn"].apply(lambda x: is_first_name_match(MedarbejderNavn, x))
-                        ]
-
-                        if fuzzy_matches.empty:
-                            print(f"[{label}] No match for {MedarbejderNavn}")
-                            continue
-                        elif len(fuzzy_matches) == 1:
-                            match = fuzzy_matches
+                        if not exact_matches.empty:
+                            match = exact_matches
                         else:
-                            distances = []
-                            for _, ident_row in fuzzy_matches.iterrows():
-                                kaldenavn = ident_row["Kaldenavn"]
+                            # Hvis ikke 1:1, brug fuzzy match på fornavnet
+                            def is_first_name_match(medarbejder_navn, kaldenavn):
                                 kalde_first = extract_first_from_kaldenavn(kaldenavn)
-                                if kalde_first:
-                                    distance = Levenshtein.distance(MedarbejderNavn.lower(), kalde_first.lower())
-                                    distances.append((ident_row, distance))
+                                if not kalde_first:
+                                    return False
 
-                            min_distance = min(d[1] for d in distances)
-                            best_matches = [row for row, dist in distances if dist == min_distance]
+                                medarbejder_navn = medarbejder_navn.lower().strip()
+                                kalde_first = kalde_first.lower().strip()
 
-                            if len(best_matches) == 1:
-                                match = pd.DataFrame([best_matches[0]])
-                            else:
-                                def cleaned(s): return re.sub(r'\s+', '', s.lower()) if isinstance(s, str) else ''
-                                ref_clean = cleaned(ref_navn)
-                                full_name_matches = [
-                                    row for row in best_matches
-                                    if cleaned(row["Kaldenavn"]) == ref_clean
-                                ]
-                                if len(full_name_matches) == 1:
-                                    match = pd.DataFrame([full_name_matches[0]])
+                                if medarbejder_navn == kalde_first:
+                                    return True  # direkte fornavnsmatch
+
+                                similarity = Levenshtein.ratio(medarbejder_navn, kalde_first)
+                                if len(medarbejder_navn) <= 4:
+                                    return similarity > 0.9
                                 else:
-                                    print(f"[{label}] Ambiguous matches for '{MedarbejderNavn}', skipping invoice.")
-                                    continue
+                                    return similarity > 0.8
+
+                            fuzzy_matches = df_ident[
+                                df_ident["Kaldenavn"].apply(lambda x: is_first_name_match(MedarbejderNavn, x))
+                            ]
+
+                            if fuzzy_matches.empty:
+                                print(f"[{label}] No match for {MedarbejderNavn}")
+                                orchestrator_connection.log_info(f"Intet match fundet for {MedarbejderNavn} — lagt til manuel behandling.")
+                                continue
+                            elif len(fuzzy_matches) == 1:
+                                match = fuzzy_matches
+                            else:
+                                distances = []
+                                for _, ident_row in fuzzy_matches.iterrows():
+                                    kaldenavn = ident_row["Kaldenavn"]
+                                    kalde_first = extract_first_from_kaldenavn(kaldenavn)
+                                    if kalde_first:
+                                        distance = Levenshtein.distance(MedarbejderNavn.lower(), kalde_first.lower())
+                                        distances.append((ident_row, distance))
+
+                                min_distance = min(d[1] for d in distances)
+                                best_matches = [row for row, dist in distances if dist == min_distance]
+
+                                if len(best_matches) == 1:
+                                    match = pd.DataFrame([best_matches[0]])
+                                else:
+                                    def cleaned(s): return re.sub(r'\s+', '', s.lower()) if isinstance(s, str) else ''
+                                    ref_clean = cleaned(ref_navn)
+                                    full_name_matches = [
+                                        row for row in best_matches
+                                        if cleaned(row["Kaldenavn"]) == ref_clean
+                                    ]
+                                    if len(full_name_matches) == 1:
+                                        match = pd.DataFrame([full_name_matches[0]])
+                                    else:
+                                        print(f"[{label}] Ambiguous matches for '{MedarbejderNavn}', skipping invoice.")
+                                        continue
 
                     if match.empty:
                         print(f"[{label}] Medarbejder not found in Opus: {MedarbejderNavn}")
