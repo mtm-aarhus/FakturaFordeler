@@ -127,7 +127,10 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
             
             # Always wait a little to let the view load
             time.sleep(2)
+
+
             
+
             # Wrap export in try-except
             try:
                 if not safe_click(wait, By.XPATH, "//div[@title='Eksport']"):
@@ -218,86 +221,6 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
 
         return faktura_refs, oldest_date
 
-    def normalize_first_last(name: str) -> str:
-        parts = [p for p in name.strip().split() if p]
-        if len(parts) < 2:
-            return name.strip()
-
-        return f"{parts[0]} {parts[-1]}"
-
-    def get_seller_order_number(driver, wait, oldest_date, ean):
-
-        driver.switch_to.default_content()
-        driver.refresh()
-        wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "div[title='Min Økonomi']"))).click()
-
-        try:
-            wait.until(EC.element_to_be_clickable((By.ID, "subTabIndex2"))).click()
-        except TimeoutException:
-            wait.until(EC.element_to_be_clickable((By.XPATH, "//div[contains(text(), 'Bilag og fakturaer')]"))).click()
-
-        wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "div[title='Bilagsforespørgsel']"))).click()
-        wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "div[title='Søg andre bilag']"))).click()
-
-        wait.until(EC.frame_to_be_available_and_switch_to_it((By.ID, "contentAreaFrame")))
-        wait.until(EC.frame_to_be_available_and_switch_to_it((By.NAME, "Søg andre bilag")))
-
-        # Fill form
-        wait.until(EC.element_to_be_clickable((By.XPATH, "//span[contains(., 'Brugerid')]/ancestor::td/following-sibling::td//input[@type='text']"))).clear()
-
-        date_input = wait.until(EC.element_to_be_clickable((By.XPATH, "//span[contains(., 'Registreringsdato')]/ancestor::td/following-sibling::td//input[@type='text']")))
-        date_input.clear()
-        date_input.send_keys(oldest_date.strftime("%d.%m.%Y"))
-
-        ean_input = wait.until(EC.element_to_be_clickable((By.XPATH,"//label[.//span[text()='EAN Nummer']]/following::input[1]")))
-        ean_input.clear()
-        ean_input.send_keys(ean)
-
-        # Click search
-        wait.until(EC.element_to_be_clickable((By.XPATH, "//div[@title='Klik for at søge (Ctrl+F8)']"))).click()
-        time.sleep(2)
-
-        # Load view
-        wait.until(EC.element_to_be_clickable((By.XPATH, "//input[@title='Load view']"))).click()
-        time.sleep(2)
-        wait.until(EC.element_to_be_clickable((By.XPATH, "//div[@class='lsListbox__value' and normalize-space(text())='Fuld view']"))).click()
-        time.sleep(2)
-
-        # Export to Excel
-        try:
-            wait.until(EC.element_to_be_clickable((By.XPATH, "//div[@title='Eksport']"))).click()
-            wait.until(EC.element_to_be_clickable((By.XPATH, "//tr[@role='menuitem' and .//span[text()='Eksport til Excel']]"))).click()
-        except TimeoutException:
-            print("Seller order export button not found.")
-            return None
-
-        # Detect and read downloaded Excel
-        timeout = 60
-        polling_interval = 1
-        downloaded_file_path = None
-        before_files = set(os.listdir(downloads_folder))
-
-        for _ in range(timeout):
-            time.sleep(polling_interval)
-            after_files = set(os.listdir(downloads_folder))
-            new_files = {f for f in (after_files - before_files) if f.lower().endswith(".xlsx")}
-            if new_files:
-                newest_file = max(new_files, key=lambda fn: os.path.getmtime(os.path.join(downloads_folder, fn)))
-                downloaded_file_path = os.path.join(downloads_folder, newest_file)
-                break
-
-        if not downloaded_file_path or not os.path.exists(downloaded_file_path):
-            print(f" Download failed or file not found.")
-            return None
-
-        df_Sellers_order_number = pd.read_excel(downloaded_file_path, engine="openpyxl")
-        time.sleep(7)
-        os.remove(downloaded_file_path)  # Optional: clean up after read
-
-
-        return df_Sellers_order_number
-
-
     def get_filtered_department_data(driver, wait, dept_name, refs, oldest_date, ean):
         if not refs:
             return None
@@ -347,7 +270,7 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
             wait.until(EC.element_to_be_clickable((By.XPATH, "//div[@title='Eksport']"))).click()
             wait.until(EC.element_to_be_clickable((By.XPATH, "//tr[@role='menuitem' and .//span[text()='Eksport til Excel']]"))).click()
         except TimeoutException:
-            print("Seller order export button not found.")
+            print(f"[{dept_name}] Export button not found.")
             return None
 
         # Detect and read downloaded Excel
@@ -431,174 +354,160 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
             AktueltBilagsDato = row.get(col_bilagsdato)
             formatted_date = AktueltBilagsDato.strftime("%d.%m.%Y") if pd.notnull(AktueltBilagsDato) else ""
 
-            
-            if not (
-                pd.notnull(reg_dato)
-                and pd.to_datetime(reg_dato, errors="coerce") > BilagsDato
-            ):
-                continue
-        
-            if ref_navn.lower() in ("n/a", "nan"):
-                continue
+            if pd.notnull(reg_dato) and pd.to_datetime(reg_dato, errors='coerce') > BilagsDato:
+                if ref_navn.lower() not in ("n/a", "nan") and re.match(r'^[\w\s\-\.,:]+$', ref_navn):
+                    
+                    #azid_search = re.search(r'AZ\d{5}', ref_navn)
 
-            if not re.match(r'^[\w\s\-\.,:]+$', ref_navn):
-                continue
-            
-            match = None  # reset per row
-
-            azid_search = re.search(r'AZ[A-Z0-9]{5}', ref_navn)
-            if azid_search:
-                medarbejder_id = azid_search.group(0)
-                az_matches = df_ident[df_ident["AZIdent"] == medarbejder_id]
-
-                if len(az_matches) == 1:
-                    match = az_matches
-                    orchestrator_connection.log_info(
-                        f"Match fundet via AZIdent: {medarbejder_id}"
-                    )
-                else:
-                    orchestrator_connection.log_info(
-                        f"AZIdent '{medarbejder_id}' gav {len(az_matches)} matches — manuel behandling."
-                    )
-                    continue
-
-            else:
-                # --------------------------------------------------
-                # 2️⃣ Exact full-name match
-                # --------------------------------------------------
-                exact_matches = df_ident[
-                    df_ident["Kaldenavn"]
-                    .fillna("")
-                    .str.lower()
-                    .str.strip()
-                    == ref_navn.lower()
-                ]
-
-                if len(exact_matches) == 1:
-                    match = exact_matches
-                    orchestrator_connection.log_info(
-                        f"Match fundet via eksakt Kaldenavn: '{ref_navn}'"
-                    )
-
-                elif len(exact_matches) > 1:
-                    orchestrator_connection.log_info(
-                        f"Flere eksakte matches for '{ref_navn}' — manuel behandling."
-                    )
-                    continue
-
-                else:
-                    # --------------------------------------------------
-                    # 3️⃣ Normalized first + last match
-                    # --------------------------------------------------
-                    ref_normalized = normalize_first_last(ref_navn).lower()
-
-                    df_ident_norm = df_ident.copy()
-                    df_ident_norm["Kaldenavn_normalized"] = (
-                        df_ident_norm["Kaldenavn"]
-                        .fillna("")
-                        .apply(normalize_first_last)
-                        .str.lower()
-                    )
-
-                    normalized_matches = df_ident_norm[
-                        df_ident_norm["Kaldenavn_normalized"] == ref_normalized
-                    ]
-
-                    if len(normalized_matches) == 1:
-                        match = normalized_matches.drop(
-                            columns=["Kaldenavn_normalized"]
-                        )
-                        orchestrator_connection.log_info(
-                            f"Match fundet via normaliseret navn: '{ref_normalized}'"
-                        )
-
+                    azid_search = re.search(r'AZ[A-Z0-9]{5}', ref_navn) # Forsøger med nyt søgning efter AZ-ident
+                    if azid_search:
+                        MedarbejderNavn = azid_search.group(0)
+                        print(f"[{label}] Found AZIdent in Ref.navn: {MedarbejderNavn}")
+                        match = df_ident[df_ident["AZIdent"] == MedarbejderNavn]
                     else:
-                        orchestrator_connection.log_info(
-                            f"Ingen entydigt match for '{ref_navn}' — manuel behandling."
-                        )
-                        continue
+                        MedarbejderNavn = extract_first_name(ref_navn)
+                        if not MedarbejderNavn:
+                            continue
 
-            if match is None or match.empty:
-                print(f"[{label}] Medarbejder not found in Opus: {ref_navn}")
-                continue
+                        print(f"[{label}] Looking for Kaldenavn match: {MedarbejderNavn}")
+                        exact_matches = df_ident[df_ident["Kaldenavn"].fillna("").str.lower().str.strip() == ref_navn.lower().strip()] # Tjekker det fulde navn
+
+                        if not exact_matches.empty:
+                            match = exact_matches
+                        else:
+                            # Hvis ikke 1:1, brug fuzzy match på fornavnet
+                            def is_first_name_match(medarbejder_navn, kaldenavn):
+                                kalde_first = extract_first_from_kaldenavn(kaldenavn)
+                                if not kalde_first:
+                                    return False
+
+                                medarbejder_navn = medarbejder_navn.lower().strip()
+                                kalde_first = kalde_first.lower().strip()
+
+                                if medarbejder_navn == kalde_first:
+                                    return True  # direkte fornavnsmatch
+
+                                similarity = Levenshtein.ratio(medarbejder_navn, kalde_first)
+                                if len(medarbejder_navn) <= 4:
+                                    return similarity > 0.9
+                                else:
+                                    return similarity > 0.8
+
+                            fuzzy_matches = df_ident[
+                                df_ident["Kaldenavn"].apply(lambda x: is_first_name_match(MedarbejderNavn, x))
+                            ]
+
+                            if fuzzy_matches.empty:
+                                print(f"[{label}] No match for {MedarbejderNavn}")
+                                orchestrator_connection.log_info(f"Intet match fundet for {MedarbejderNavn} — lagt til manuel behandling.")
+                                continue
+                            elif len(fuzzy_matches) == 1:
+                                match = fuzzy_matches
+                            else:
+                                distances = []
+                                for _, ident_row in fuzzy_matches.iterrows():
+                                    kaldenavn = ident_row["Kaldenavn"]
+                                    kalde_first = extract_first_from_kaldenavn(kaldenavn)
+                                    if kalde_first:
+                                        distance = Levenshtein.distance(MedarbejderNavn.lower(), kalde_first.lower())
+                                        distances.append((ident_row, distance))
+
+                                min_distance = min(d[1] for d in distances)
+                                best_matches = [row for row, dist in distances if dist == min_distance]
+
+                                if len(best_matches) == 1:
+                                    match = pd.DataFrame([best_matches[0]])
+                                else:
+                                    def cleaned(s): return re.sub(r'\s+', '', s.lower()) if isinstance(s, str) else ''
+                                    ref_clean = cleaned(ref_navn)
+                                    full_name_matches = [
+                                        row for row in best_matches
+                                        if cleaned(row["Kaldenavn"]) == ref_clean
+                                    ]
+                                    if len(full_name_matches) == 1:
+                                        match = pd.DataFrame([full_name_matches[0]])
+                                    else:
+                                        print(f"[{label}] Ambiguous matches for '{MedarbejderNavn}', skipping invoice.")
+                                        continue
+
+                    if match.empty:
+                        print(f"[{label}] Medarbejder not found in Opus: {MedarbejderNavn}")
+                    else:
+                        azident = match.iloc[0]["AZIdent"]
+                        print(f"[{label}] AZIDENT for {MedarbejderNavn}: {azident}")
+                        
+                        driver.refresh()
+                        wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "div[title='Min Økonomi']"))).click()
+
+                        try:
+                            wait.until(EC.element_to_be_clickable((By.ID, "subTabIndex2"))).click()
+                        except TimeoutException:
+                            wait.until(EC.element_to_be_clickable((By.XPATH, "//div[contains(text(), 'Bilag og fakturaer')]"))).click()
+                        
+                        wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "div[title='Bilagsforespørgsel']"))).click()
+                        wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "div[title='Søg andre bilag']"))).click()
+                        wait.until(EC.frame_to_be_available_and_switch_to_it((By.ID, "contentAreaFrame")))
+                        wait.until(EC.frame_to_be_available_and_switch_to_it((By.NAME, "Søg andre bilag")))
+
+                        fakturabilag_input = wait.until(EC.element_to_be_clickable((By.XPATH,"//label[contains(., 'Fakturabilag')]/following::input[1]")))
+                        fakturabilag_input.clear()
+                        fakturabilag_input.send_keys(faktura_nummer)
+
+                        input_azident = wait.until(EC.element_to_be_clickable((By.XPATH, "//span[contains(., 'Brugerid')]/ancestor::td/following-sibling::td//input[@type='text']")))
+                        input_azident.clear()
+
+                        date_input = wait.until(EC.element_to_be_clickable((By.XPATH,"//span[contains(., 'Registreringsdato')]/ancestor::td/following-sibling::td//input[@type='text']")))
+                        date_input.clear()
+                        date_input.send_keys(formatted_date)
+
+                        wait.until(EC.element_to_be_clickable((By.XPATH, "//div[@title='Klik for at søge (Ctrl+F8)']"))).click()
+
+                        time.sleep(5)
+                        if driver.find_elements(By.XPATH, "//span[text()='Tabel indeholder ingen data']"):
+                            print("Kunne ikke finde et bilag")
+                            continue
+                        
+                        wait.until(EC.element_to_be_clickable((By.XPATH, "//div[@title='Videresend']"))).click()
+                        time.sleep(5)
+                        driver.switch_to.default_content()
+                        wait.until(EC.frame_to_be_available_and_switch_to_it((By.ID, "URLSPW-0")))
+
+                        next_agent_input = wait.until(EC.element_to_be_clickable((By.XPATH, "//span[contains(text(), 'Næste agent')]/ancestor::td//following::input[@type='text']")))
+                        next_agent_input.clear()
+                        next_agent_input.send_keys(azident)
+
+                        textarea = wait.until(EC.element_to_be_clickable((By.XPATH, "//textarea[@title='Comments for Forwarding']")))
+                        textarea.clear()
+                        textarea.send_keys("Videresendt af Robot")
+
+                        #wait.until(EC.element_to_be_clickable((By.XPATH, "//span[normalize-space(text())='Annuller']/ancestor::div[contains(@class, 'lsButton')]"))).click()
+
+                        wait.until(EC.element_to_be_clickable((By.XPATH, "//span[normalize-space(text())='OK']/ancestor::div[contains(@class, 'lsButton')]"))).click()
+                        time.sleep(2)
+                        # Log info
+                        
+                        orchestrator_connection.log_info(f"Faktura: {faktura_nummer} er videresendt til {azident} d. {formatted_date}")
+
+                        # Save to database
+                        try:
+                            conn = pyodbc.connect("DRIVER={ODBC Driver 17 for SQL Server};SERVER=srvsql29;DATABASE=PyOrchestrator;Trusted_Connection=yes")
+                            cursor = conn.cursor()
+                            insert_query = """
+                                INSERT INTO FakturaFordeler (Fakturanummer, AzIdent, Dato)
+                                VALUES (?, ?, ?)
+                            """
+                            cursor.execute(insert_query, faktura_nummer, azident, AktueltBilagsDato.date())
+                            conn.commit()
+                            cursor.close()
+                            conn.close()
+                        except Exception as db_error:
+                            orchestrator_connection.log_info(f"Database log failed for Faktura {faktura_nummer}: {db_error}")
+
+
+                        if pd.notnull(AktueltBilagsDato):
+                            handled_bilagsdatoer.append(AktueltBilagsDato)
             else:
-                azident = match.iloc[0]["AZIdent"]
-                print(f"[{label}] AZIDENT for {ref_navn}: {azident}")
-                orchestrator_connection.log_info(f"[{label}] Faktura {faktura_nummer} | Reference: '{ref_navn}' | Matched medarbejder: '{match.iloc[0]['Kaldenavn']}' ({azident})"
-)
-                
-                driver.refresh()
-                wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "div[title='Min Økonomi']"))).click()
-
-                try:
-                    wait.until(EC.element_to_be_clickable((By.ID, "subTabIndex2"))).click()
-                except TimeoutException:
-                    wait.until(EC.element_to_be_clickable((By.XPATH, "//div[contains(text(), 'Bilag og fakturaer')]"))).click()
-                
-                wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "div[title='Bilagsforespørgsel']"))).click()
-                wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "div[title='Søg andre bilag']"))).click()
-                wait.until(EC.frame_to_be_available_and_switch_to_it((By.ID, "contentAreaFrame")))
-                wait.until(EC.frame_to_be_available_and_switch_to_it((By.NAME, "Søg andre bilag")))
-
-                fakturabilag_input = wait.until(EC.element_to_be_clickable((By.XPATH,"//label[contains(., 'Fakturabilag')]/following::input[1]")))
-                fakturabilag_input.clear()
-                fakturabilag_input.send_keys(faktura_nummer)
-
-                input_azident = wait.until(EC.element_to_be_clickable((By.XPATH, "//span[contains(., 'Brugerid')]/ancestor::td/following-sibling::td//input[@type='text']")))
-                input_azident.clear()
-
-                date_input = wait.until(EC.element_to_be_clickable((By.XPATH,"//span[contains(., 'Registreringsdato')]/ancestor::td/following-sibling::td//input[@type='text']")))
-                date_input.clear()
-                date_input.send_keys(formatted_date)
-
-                wait.until(EC.element_to_be_clickable((By.XPATH, "//div[@title='Klik for at søge (Ctrl+F8)']"))).click()
-
-                time.sleep(5)
-                if driver.find_elements(By.XPATH, "//span[text()='Tabel indeholder ingen data']"):
-                    print("Kunne ikke finde et bilag")
-                    continue
-                
-                wait.until(EC.element_to_be_clickable((By.XPATH, "//div[@title='Videresend']"))).click()
-                time.sleep(5)
-                driver.switch_to.default_content()
-                wait.until(EC.frame_to_be_available_and_switch_to_it((By.ID, "URLSPW-0")))
-
-                next_agent_input = wait.until(EC.element_to_be_clickable((By.XPATH, "//span[contains(text(), 'Næste agent')]/ancestor::td//following::input[@type='text']")))
-                next_agent_input.clear()
-                next_agent_input.send_keys(azident)
-
-                textarea = wait.until(EC.element_to_be_clickable((By.XPATH, "//textarea[@title='Comments for Forwarding']")))
-                textarea.clear()
-                textarea.send_keys("Videresendt af Robot")
-
-                #wait.until(EC.element_to_be_clickable((By.XPATH, "//span[normalize-space(text())='Annuller']/ancestor::div[contains(@class, 'lsButton')]"))).click()
-
-                wait.until(EC.element_to_be_clickable((By.XPATH, "//span[normalize-space(text())='OK']/ancestor::div[contains(@class, 'lsButton')]"))).click()
-                time.sleep(2)
-                # Log info
-                
-                orchestrator_connection.log_info(f"Faktura: {faktura_nummer} er videresendt til {azident} d. {formatted_date}")
-
-                # Save to database
-                try:
-                    conn = pyodbc.connect("DRIVER={ODBC Driver 17 for SQL Server};SERVER=srvsql29;DATABASE=PyOrchestrator;Trusted_Connection=yes")
-                    cursor = conn.cursor()
-                    insert_query = """
-                        INSERT INTO FakturaFordeler (Fakturanummer, AzIdent, Dato)
-                        VALUES (?, ?, ?)
-                    """
-                    cursor.execute(insert_query, faktura_nummer, azident, AktueltBilagsDato.date())
-                    conn.commit()
-                    cursor.close()
-                    conn.close()
-                except Exception as db_error:
-                    orchestrator_connection.log_info(f"Database log failed for Faktura {faktura_nummer}: {db_error}")
-
-
-                if pd.notnull(AktueltBilagsDato):
-                    handled_bilagsdatoer.append(AktueltBilagsDato)
-                else:
-                    print("Datoen er overskredet")
+                print("Datoen er overskredet")
 
     def extract_first_name(text):
         if not isinstance(text, str):
@@ -610,7 +519,7 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
         for word in words:
             if len(word) > 1 and word.lower() not in DISALLOWED_TERMS:
                 return word
-            return None  
+        return None  
 
     def extract_first_from_kaldenavn(kaldenavn):
         if not isinstance(kaldenavn, str):
@@ -626,32 +535,7 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
         filtered = df[df[column_name].astype(str).isin(ref_list)]
         print(f"Found {len(filtered)} matching rows based on references in '{column_name}'.")
         return filtered
-    
-    def get_oldest_bilagsdato_from_original(df):
-        if df is None or df.empty:
-            print("Original DataFrame is None or empty.")
-            return None
 
-        if "Bilagsdato" not in df.columns:
-            print("Column 'Bilagsdato' not found in original DataFrame.")
-            return None
-
-        df_dates = df.copy()
-
-        # Parse dates (same logic as before)
-        df_dates["Bilagsdato"] = pd.to_datetime(
-            df_dates["Bilagsdato"],
-            errors="coerce"
-        )
-
-        df_dates = df_dates.dropna(subset=["Bilagsdato"])
-
-        if df_dates.empty:
-            print("No valid 'Bilagsdato' in original DataFrame.")
-            return None
-
-        oldest_date = df_dates["Bilagsdato"].min()
-        return oldest_date
 
     # === 7. Main Automation Flow ===
     try:
@@ -711,30 +595,14 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
         # ---- Download both files and store DataFrames ----
         df_Naturafdelingen, path_Natur = download_excel_for_ean(EAN_Naturafdelingen, "Naturafdelingen", set_view=True)
         df_Vejafdelingen, path_Vej = download_excel_for_ean(EAN_Vejafdelingen, "Vejafdelingen", set_view=True)
-        natur_oldest_full = get_oldest_bilagsdato_from_original(df_Naturafdelingen)
-        vej_oldest_full = get_oldest_bilagsdato_from_original(df_Vejafdelingen)
 
-        seller_dfs = []
 
-        if natur_oldest_full:
-            seller_dfs.append(
-                ("Seller Naturafdelingen",
-                get_seller_order_number(driver, wait, natur_oldest_full, EAN_Naturafdelingen))
-            )
-
-        if vej_oldest_full:
-            seller_dfs.append(
-                ("Seller Vejafdelingen",
-                get_seller_order_number(driver, wait, vej_oldest_full, EAN_Vejafdelingen))
-            )
-
-        #Tjekker om stark findes
         try:
             refs_to_find_natur, natur_oldest = check_and_extract_references(df_Naturafdelingen)
         except Exception as e:
             refs_to_find_natur, natur_oldest = [], None
             print(f"Error processing Naturafdelingen references: {e}")
-        #Tjekker om stark findes
+
         try:
             refs_to_find_vej, vej_oldest = check_and_extract_references(df_Vejafdelingen)
         except Exception as e:
@@ -751,7 +619,6 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
         df_Stark_Naturafdelingen = None
         df_Stark_Vejafdelingen = None
 
-        #Henter stark data hvis der er noget
         for dept_name, refs, oldest_date, ean in departments:
             print(f"Processing department: {dept_name}, using EAN: {ean}")
             df_filtered = get_filtered_department_data(driver, wait, dept_name, refs, oldest_date, ean)
@@ -805,23 +672,6 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
             if label in standard_labels and df_ident_all is not None:
                 process_dataframe(label, df, df_ident_all)
 
-
-        #Process standard departments but using sælgers order number: 
-        for label, df_seller in seller_dfs:
-            if (
-                df_ident_all is not None
-                and df_seller is not None
-                and not df_seller.empty
-            ):
-                process_dataframe(
-                    label,
-                    df_seller,
-                    df_ident_all,
-                    col_ref_navn="Sælgers ordrenr",
-                    col_bilagsdato="Reg.dato"
-                )
-
-
         # Collect and process Stark DataFrames separately
         stark_dataframes = []
 
@@ -834,7 +684,7 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
         for label, df in stark_dataframes:
             if df_ident_all is not None:
                 process_dataframe(label, df, df_ident_all, col_ref_navn="Købers ordrenr", col_bilagsdato="Reg.dato")
-        
+
         #Cleanup
         for file_path in excel_paths:
             try:
