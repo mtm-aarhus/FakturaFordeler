@@ -427,8 +427,18 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
         for idx, row in df.iterrows():
             reg_dato = row.get("Reg.dato")
             ref_navn = str(row.get(col_ref_navn)).strip()
-             #  CLEANUP STEP 
-            ref_navn = re.sub(r'(?i)^\s*(att|att\.|att:|til|til:)\s*', '', ref_navn).strip()
+
+            # Remove common prefixes (Att, Til, etc.)
+            ref_navn = re.sub(
+                r'(?i)^\s*(att|att\.|att:|til|til:)\s*',
+                '',
+                ref_navn
+            )
+
+            # Remove leftover leading punctuation (like ":" or "-")
+            ref_navn = re.sub(r'^[\s:–\-.,]+', '', ref_navn).strip()
+
+
             print(f"Cleaned refnavn er: {ref_navn}")
             
             faktura_nummer = row.get("Fakturabilag")
