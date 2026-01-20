@@ -429,6 +429,7 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
             ref_navn = str(row.get(col_ref_navn)).strip()
              #  CLEANUP STEP 
             ref_navn = re.sub(r'(?i)\b(att:|att\.|til:)\b', '', ref_navn).strip()
+            print(f"Cleaned refnavn er: {ref_navn}")
             
             faktura_nummer = row.get("Fakturabilag")
             AktueltBilagsDato = row.get(col_bilagsdato)
