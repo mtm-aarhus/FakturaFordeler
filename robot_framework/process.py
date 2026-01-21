@@ -417,6 +417,9 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
         conn.close()
         return df_result
 
+    def is_single_first_name(name: str) -> bool:
+        return len(name.split()) == 1
+    
     def process_dataframe(label, df, df_ident, col_ref_navn="Ref.navn", col_bilagsdato="Reg.dato"):
         if df is None or df.empty:
             print(f"DataFrame for {label} is empty. Skipping.")
@@ -525,12 +528,52 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
                         orchestrator_connection.log_info(
                             f"Match fundet via normaliseret navn: '{ref_normalized}'"
                         )
-
-                    else:
+                    elif len(normalized_matches) > 1:
                         orchestrator_connection.log_info(
-                            f"Ingen entydigt match for '{ref_navn}' — manuel behandling."
+                            f"Flere normaliserede matches for '{ref_navn}' — manuel behandling."
                         )
                         continue
+                    else: 
+                        # --------------------------------------------------
+                        # 4️⃣ First-name-only match (fallback)
+                        # --------------------------------------------------
+                        if is_single_first_name(ref_navn):
+
+                            ref_first = ref_navn.lower()
+
+                            df_ident_first = df_ident.copy()
+                            df_ident_first["first_name"] = (
+                                df_ident_first["Kaldenavn"]
+                                .fillna("")
+                                .str.strip()
+                                .str.split()
+                                .str[0]
+                                .str.lower()
+                            )
+
+                            first_name_matches = df_ident_first[
+                                df_ident_first["first_name"] == ref_first
+                            ]
+
+                            if len(first_name_matches) == 1:
+                                match = first_name_matches.drop(columns=["first_name"])
+
+                                full_kaldenavn = match.iloc[0]["Kaldenavn"]
+
+                                orchestrator_connection.log_info(
+                                    f"Match fundet via fornavn: '{ref_navn}' → '{full_kaldenavn}'"
+                                )
+
+                            elif len(first_name_matches) > 1:
+                                orchestrator_connection.log_info(
+                                    f"Flere matches på fornavn '{ref_navn}' — manuel behandling."
+                                )
+                                continue
+                        else:
+                            orchestrator_connection.log_info(
+                                f"Ingen entydigt match for '{ref_navn}' — manuel behandling."
+                            )
+                            continue
 
             if match is None or match.empty:
                 print(f"[{label}] Medarbejder not found in Opus: {ref_navn}")
