@@ -420,7 +420,7 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
     def is_single_first_name(name: str) -> bool:
         return len(name.split()) == 1
     
-    def process_dataframe(label, df, df_ident, col_ref_navn="Ref.navn", col_bilagsdato="Reg.dato"):
+    def process_dataframe(label,df,df_ident,col_ref_navn="Ref.navn",alt_ref_cols=None,col_bilagsdato="Reg.dato"):
         if df is None or df.empty:
             print(f"DataFrame for {label} is empty. Skipping.")
             return
@@ -429,9 +429,23 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
 
         for idx, row in df.iterrows():
             reg_dato = row.get("Reg.dato")
+
+            # 1️⃣ Read primary reference column
             ref_navn = str(row.get(col_ref_navn)).strip()
 
-            # Remove common prefixes (Att, Til, etc.)
+            # 2️⃣ 🔁 Fallback to alternative reference columns (SELLER logic)
+            if (not ref_navn or ref_navn.lower() in ("nan", "n/a")) and alt_ref_cols:
+                for alt_col in alt_ref_cols:
+                    if alt_col in df.columns:
+                        candidate = str(row.get(alt_col)).strip()
+                        if candidate and candidate.lower() not in ("nan", "n/a"):
+                            ref_navn = candidate
+                            orchestrator_connection.log_info(
+                                f"[{label}] Bruger fallback reference kolonne '{alt_col}': {ref_navn}"
+                            )
+                            break
+
+            # 3️⃣ NOW clean the chosen reference value
             ref_navn = re.sub(
                 r'(?i)^\s*(att|att\.|att:|til|til:)\s*',
                 '',
@@ -785,53 +799,53 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
                 get_seller_order_number(driver, wait, vej_oldest_full, EAN_Vejafdelingen))
             )
 
-        #Tjekker om stark findes
-        try:
-            refs_to_find_natur, natur_oldest = check_and_extract_references(df_Naturafdelingen)
-        except Exception as e:
-            refs_to_find_natur, natur_oldest = [], None
-            print(f"Error processing Naturafdelingen references: {e}")
-        #Tjekker om stark findes
-        try:
-            refs_to_find_vej, vej_oldest = check_and_extract_references(df_Vejafdelingen)
-        except Exception as e:
-            refs_to_find_vej, vej_oldest = [], None
-            print(f"Error processing Vejafdelingen references: {e}")
+        # #Tjekker om stark findes
+        # try:
+        #     refs_to_find_natur, natur_oldest = check_and_extract_references(df_Naturafdelingen)
+        # except Exception as e:
+        #     refs_to_find_natur, natur_oldest = [], None
+        #     print(f"Error processing Naturafdelingen references: {e}")
+        # #Tjekker om stark findes
+        # try:
+        #     refs_to_find_vej, vej_oldest = check_and_extract_references(df_Vejafdelingen)
+        # except Exception as e:
+        #     refs_to_find_vej, vej_oldest = [], None
+        #     print(f"Error processing Vejafdelingen references: {e}")
 
 
-        # Combine data into a list of tuples for iteration
-        departments = [
-            ("Naturafdelingen", refs_to_find_natur, natur_oldest,EAN_Naturafdelingen),
-            ("Vejafdelingen", refs_to_find_vej, vej_oldest,EAN_Vejafdelingen)
-        ]
+        # # Combine data into a list of tuples for iteration
+        # departments = [
+        #     ("Naturafdelingen", refs_to_find_natur, natur_oldest,EAN_Naturafdelingen),
+        #     ("Vejafdelingen", refs_to_find_vej, vej_oldest,EAN_Vejafdelingen)
+        # ]
 
-        df_Stark_Naturafdelingen = None
-        df_Stark_Vejafdelingen = None
+        # df_Stark_Naturafdelingen = None
+        # df_Stark_Vejafdelingen = None
 
-        #Henter stark data hvis der er noget
-        for dept_name, refs, oldest_date, ean in departments:
-            print(f"Processing department: {dept_name}, using EAN: {ean}")
-            df_filtered = get_filtered_department_data(driver, wait, dept_name, refs, oldest_date, ean)
-            if df_filtered is not None and not df_filtered.empty:
-                if dept_name == "Naturafdelingen":
-                    df_Stark_Naturafdelingen = df_filtered
-                elif dept_name == "Vejafdelingen":
-                    df_Stark_Vejafdelingen = df_filtered
+        # #Henter stark data hvis der er noget
+        # for dept_name, refs, oldest_date, ean in departments:
+        #     print(f"Processing department: {dept_name}, using EAN: {ean}")
+        #     df_filtered = get_filtered_department_data(driver, wait, dept_name, refs, oldest_date, ean)
+        #     if df_filtered is not None and not df_filtered.empty:
+        #         if dept_name == "Naturafdelingen":
+        #             df_Stark_Naturafdelingen = df_filtered
+        #         elif dept_name == "Vejafdelingen":
+        #             df_Stark_Vejafdelingen = df_filtered
 
-        print(f"\nNaturafdelingen - {len(df_Stark_Naturafdelingen)} rows:" if df_Stark_Naturafdelingen is not None else "\nNaturafdelingen - No data.")
-        if df_Stark_Naturafdelingen is not None:
-            print(df_Stark_Naturafdelingen.head())
+        # print(f"\nNaturafdelingen - {len(df_Stark_Naturafdelingen)} rows:" if df_Stark_Naturafdelingen is not None else "\nNaturafdelingen - No data.")
+        # if df_Stark_Naturafdelingen is not None:
+        #     print(df_Stark_Naturafdelingen.head())
 
-        print(f"\nVejafdelingen - {len(df_Stark_Vejafdelingen)} rows:" if df_Stark_Vejafdelingen is not None else "\nVejafdelingen - No data.")
-        if df_Stark_Vejafdelingen is not None:
-            print(df_Stark_Vejafdelingen.head())
+        # print(f"\nVejafdelingen - {len(df_Stark_Vejafdelingen)} rows:" if df_Stark_Vejafdelingen is not None else "\nVejafdelingen - No data.")
+        # if df_Stark_Vejafdelingen is not None:
+        #     print(df_Stark_Vejafdelingen.head())
         
         # Register both raw and filtered Stark data
         register_dataframe("Naturafdelingen", df_Naturafdelingen, path_Natur)
         register_dataframe("Vejafdelingen", df_Vejafdelingen, path_Vej)
 
-        register_dataframe("Stark Naturafdelingen", df_Stark_Naturafdelingen, None)
-        register_dataframe("Stark Vejafdelingen", df_Stark_Vejafdelingen, None)
+        # register_dataframe("Stark Naturafdelingen", df_Stark_Naturafdelingen, None)
+        # register_dataframe("Stark Vejafdelingen", df_Stark_Vejafdelingen, None)
 
 
         # Fetch AZIdent data
@@ -855,7 +869,7 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
         
 
 
-        # Process standard (non-Stark) departments
+        # Process standard departments
         standard_labels = ["Naturafdelingen", "Vejafdelingen"]
 
         for label, df in dataframes:
@@ -875,22 +889,22 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
                     df_seller,
                     df_ident_all,
                     col_ref_navn="Sælgers ordrenr",
+                    alt_ref_cols=["Købers ordrenr"],
                     col_bilagsdato="Reg.dato"
                 )
 
+        # # Collect and process Stark DataFrames separately
+        # stark_dataframes = []
 
-        # Collect and process Stark DataFrames separately
-        stark_dataframes = []
+        # if df_Stark_Naturafdelingen is not None:
+        #     stark_dataframes.append(("Stark Naturafdelingen", df_Stark_Naturafdelingen))
 
-        if df_Stark_Naturafdelingen is not None:
-            stark_dataframes.append(("Stark Naturafdelingen", df_Stark_Naturafdelingen))
+        # if df_Stark_Vejafdelingen is not None:
+        #     stark_dataframes.append(("Stark Vejafdelingen", df_Stark_Vejafdelingen))
 
-        if df_Stark_Vejafdelingen is not None:
-            stark_dataframes.append(("Stark Vejafdelingen", df_Stark_Vejafdelingen))
-
-        for label, df in stark_dataframes:
-            if df_ident_all is not None:
-                process_dataframe(label, df, df_ident_all, col_ref_navn="Købers ordrenr", col_bilagsdato="Reg.dato")
+        # for label, df in stark_dataframes:
+        #     if df_ident_all is not None:
+        #         process_dataframe(label, df, df_ident_all, col_ref_navn="Købers ordrenr", col_bilagsdato="Reg.dato")
         
         #Cleanup
         for file_path in excel_paths:
