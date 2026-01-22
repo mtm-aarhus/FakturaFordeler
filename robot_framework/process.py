@@ -420,7 +420,31 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
     def is_single_first_name(name: str) -> bool:
         return len(name.split()) == 1
     
-    def process_dataframe(label,df,df_ident,col_ref_navn="Ref.navn",alt_ref_cols=None,col_bilagsdato="Reg.dato"):
+    def split_reference_names(ref_text: str) -> list[str]:
+        """
+        Split a reference field that may contain multiple names.
+        Handles: comma, slash, semicolon, 'og'
+        """
+        if not isinstance(ref_text, str):
+            return []
+
+        normalized = re.sub(
+            r"\s*(,|/|;|\bog\b)\s*",
+            ",",
+            ref_text,
+            flags=re.IGNORECASE
+        )
+
+        return [p.strip() for p in normalized.split(",") if p.strip()]
+
+    def process_dataframe(
+        label,
+        df,
+        df_ident,
+        col_ref_navn="Ref.navn",
+        alt_ref_cols=None,
+        col_bilagsdato="Reg.dato"
+    ):
         if df is None or df.empty:
             print(f"DataFrame for {label} is empty. Skipping.")
             return
@@ -428,12 +452,13 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
         print(f"Processing DataFrame for {label}. Rows: {len(df)}")
 
         for idx, row in df.iterrows():
-            reg_dato = row.get("Reg.dato")
+            reg_dato = row.get(col_bilagsdato)
 
-            # 1️⃣ Read primary reference column
+            # --------------------------------------------------
+            # 1️⃣ Read reference (primary + fallback)
+            # --------------------------------------------------
             ref_navn = str(row.get(col_ref_navn)).strip()
 
-            # 2️⃣ 🔁 Fallback to alternative reference columns (SELLER logic)
             if (not ref_navn or ref_navn.lower() in ("nan", "n/a")) and alt_ref_cols:
                 for alt_col in alt_ref_cols:
                     if alt_col in df.columns:
@@ -445,231 +470,201 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
                             )
                             break
 
-            # 3️⃣ NOW clean the chosen reference value
-            ref_navn = re.sub(
-                r'(?i)^\s*(att|att\.|att:|til|til:)\s*',
-                '',
-                ref_navn
-            )
-
-            # Remove leftover leading punctuation (like ":" or "-")
+            # --------------------------------------------------
+            # 2️⃣ Clean reference
+            # --------------------------------------------------
+            ref_navn = re.sub(r'(?i)^\s*(att|att\.|att:|til|til:)\s*', '', ref_navn)
             ref_navn = re.sub(r'^[\s:–\-.,]+', '', ref_navn).strip()
 
+            if not ref_navn or ref_navn.lower() in ("nan", "n/a"):
+                continue
 
-            print(f"Cleaned refnavn er: {ref_navn}")
-            
-            faktura_nummer = row.get("Fakturabilag")
-            AktueltBilagsDato = row.get(col_bilagsdato)
-            formatted_date = AktueltBilagsDato.strftime("%d.%m.%Y") if pd.notnull(AktueltBilagsDato) else ""
-
-            
             if not (
                 pd.notnull(reg_dato)
                 and pd.to_datetime(reg_dato, errors="coerce") > BilagsDato
             ):
                 continue
-        
-            if ref_navn.lower() in ("n/a", "nan"):
-                continue
 
-            if not re.match(r'^[\w\s\-\.,:]+$', ref_navn):
-                continue
-            
-            match = None  # reset per row
+            # --------------------------------------------------
+            # 3️⃣ Split reference into multiple names
+            # --------------------------------------------------
+            ref_candidates = split_reference_names(ref_navn)
 
-            azid_search = re.search(r'AZ[A-Z0-9]{5}', ref_navn)
-            if azid_search:
-                medarbejder_id = azid_search.group(0)
-                az_matches = df_ident[df_ident["AZIdent"] == medarbejder_id]
+            match = None
+            matched_name = None
 
-                if len(az_matches) == 1:
-                    match = az_matches
-                    orchestrator_connection.log_info(
-                        f"Match fundet via AZIdent: {medarbejder_id}"
-                    )
-                else:
-                    orchestrator_connection.log_info(
-                        f"AZIdent '{medarbejder_id}' gav {len(az_matches)} matches — manuel behandling."
-                    )
-                    continue
+            for ref_candidate in ref_candidates:
+                orchestrator_connection.log_info(
+                    f"[{label}] Prøver reference-kandidat: '{ref_candidate}'"
+                )
 
-            else:
-                # --------------------------------------------------
-                # 2️⃣ Exact full-name match
-                # --------------------------------------------------
+                # ---------- AZIdent ----------
+                azid_search = re.search(r'AZ[A-Z0-9]{5}', ref_candidate)
+                if azid_search:
+                    medarbejder_id = azid_search.group(0)
+                    az_matches = df_ident[df_ident["AZIdent"] == medarbejder_id]
+                    if len(az_matches) == 1:
+                        match = az_matches
+                        matched_name = ref_candidate
+                        break
+                    else:
+                        continue
+
+                # ---------- Exact full name ----------
                 exact_matches = df_ident[
                     df_ident["Kaldenavn"]
                     .fillna("")
                     .str.lower()
                     .str.strip()
-                    == ref_navn.lower()
+                    == ref_candidate.lower()
                 ]
-
                 if len(exact_matches) == 1:
                     match = exact_matches
-                    orchestrator_connection.log_info(
-                        f"Match fundet via eksakt Kaldenavn: '{ref_navn}'"
-                    )
-
+                    matched_name = ref_candidate
+                    break
                 elif len(exact_matches) > 1:
-                    orchestrator_connection.log_info(
-                        f"Flere eksakte matches for '{ref_navn}' — manuel behandling."
-                    )
                     continue
 
-                else:
-                    # --------------------------------------------------
-                    # 3️⃣ Normalized first + last match
-                    # --------------------------------------------------
-                    ref_normalized = normalize_first_last(ref_navn).lower()
+                # ---------- Normalized first + last ----------
+                ref_normalized = normalize_first_last(ref_candidate).lower()
+                df_ident_norm = df_ident.copy()
+                df_ident_norm["Kaldenavn_normalized"] = (
+                    df_ident_norm["Kaldenavn"]
+                    .fillna("")
+                    .apply(normalize_first_last)
+                    .str.lower()
+                )
+                normalized_matches = df_ident_norm[
+                    df_ident_norm["Kaldenavn_normalized"] == ref_normalized
+                ]
+                if len(normalized_matches) == 1:
+                    match = normalized_matches.drop(columns=["Kaldenavn_normalized"])
+                    matched_name = ref_candidate
+                    break
+                elif len(normalized_matches) > 1:
+                    continue
 
-                    df_ident_norm = df_ident.copy()
-                    df_ident_norm["Kaldenavn_normalized"] = (
-                        df_ident_norm["Kaldenavn"]
+                # ---------- First-name-only ----------
+                if is_single_first_name(ref_candidate):
+                    ref_first = ref_candidate.lower()
+                    df_ident_first = df_ident.copy()
+                    df_ident_first["first_name"] = (
+                        df_ident_first["Kaldenavn"]
                         .fillna("")
-                        .apply(normalize_first_last)
+                        .str.split()
+                        .str[0]
                         .str.lower()
                     )
-
-                    normalized_matches = df_ident_norm[
-                        df_ident_norm["Kaldenavn_normalized"] == ref_normalized
+                    first_name_matches = df_ident_first[
+                        df_ident_first["first_name"] == ref_first
                     ]
-
-                    if len(normalized_matches) == 1:
-                        match = normalized_matches.drop(
-                            columns=["Kaldenavn_normalized"]
-                        )
-                        orchestrator_connection.log_info(
-                            f"Match fundet via normaliseret navn: '{ref_normalized}'"
-                        )
-                    elif len(normalized_matches) > 1:
-                        orchestrator_connection.log_info(
-                            f"Flere normaliserede matches for '{ref_navn}' — manuel behandling."
-                        )
+                    if len(first_name_matches) == 1:
+                        match = first_name_matches.drop(columns=["first_name"])
+                        matched_name = ref_candidate
+                        break
+                    else:
                         continue
-                    else: 
-                        # --------------------------------------------------
-                        # 4️⃣ First-name-only match (fallback)
-                        # --------------------------------------------------
-                        if is_single_first_name(ref_navn):
 
-                            ref_first = ref_navn.lower()
-
-                            df_ident_first = df_ident.copy()
-                            df_ident_first["first_name"] = (
-                                df_ident_first["Kaldenavn"]
-                                .fillna("")
-                                .str.strip()
-                                .str.split()
-                                .str[0]
-                                .str.lower()
-                            )
-
-                            first_name_matches = df_ident_first[
-                                df_ident_first["first_name"] == ref_first
-                            ]
-
-                            if len(first_name_matches) == 1:
-                                match = first_name_matches.drop(columns=["first_name"])
-
-                                full_kaldenavn = match.iloc[0]["Kaldenavn"]
-
-                                orchestrator_connection.log_info(
-                                    f"Match fundet via fornavn: '{ref_navn}' → '{full_kaldenavn}'"
-                                )
-
-                            elif len(first_name_matches) > 1:
-                                orchestrator_connection.log_info(
-                                    f"Flere matches på fornavn '{ref_navn}' — manuel behandling."
-                                )
-                                continue
-                        else:
-                            orchestrator_connection.log_info(
-                                f"Ingen entydigt match for '{ref_navn}' — manuel behandling."
-                            )
-                            continue
-
+            # --------------------------------------------------
+            # 4️⃣ Final match decision
+            # --------------------------------------------------
             if match is None or match.empty:
-                print(f"[{label}] Medarbejder not found in Opus: {ref_navn}")
+                orchestrator_connection.log_info(
+                    f"[{label}] Ingen entydigt match for nogen af: {ref_candidates} — manuel behandling."
+                )
                 continue
+
+            azident = match.iloc[0]["AZIdent"]
+            faktura_nummer = row.get("Fakturabilag")
+            AktueltBilagsDato = row.get(col_bilagsdato)
+            formatted_date = (
+                AktueltBilagsDato.strftime("%d.%m.%Y")
+                if pd.notnull(AktueltBilagsDato)
+                else ""
+            )
+
+            orchestrator_connection.log_info(
+                f"[{label}] Faktura {faktura_nummer} | "
+                f"Reference valgt: '{matched_name}' | "
+                f"Matched medarbejder: '{match.iloc[0]['Kaldenavn']}' ({azident})"
+            )
+            
+            # --------------------------------------------------
+            # 5️⃣ OPUS SEARCH + FORWARDING (UNCHANGED LOGIC)
+            # -----------------------------------------------------
+            
+            driver.refresh()
+            wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "div[title='Min Økonomi']"))).click()
+
+            try:
+                wait.until(EC.element_to_be_clickable((By.ID, "subTabIndex2"))).click()
+            except TimeoutException:
+                wait.until(EC.element_to_be_clickable((By.XPATH, "//div[contains(text(), 'Bilag og fakturaer')]"))).click()
+            
+            wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "div[title='Bilagsforespørgsel']"))).click()
+            wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "div[title='Søg andre bilag']"))).click()
+            wait.until(EC.frame_to_be_available_and_switch_to_it((By.ID, "contentAreaFrame")))
+            wait.until(EC.frame_to_be_available_and_switch_to_it((By.NAME, "Søg andre bilag")))
+
+            fakturabilag_input = wait.until(EC.element_to_be_clickable((By.XPATH,"//label[contains(., 'Fakturabilag')]/following::input[1]")))
+            fakturabilag_input.clear()
+            fakturabilag_input.send_keys(faktura_nummer)
+
+            input_azident = wait.until(EC.element_to_be_clickable((By.XPATH, "//span[contains(., 'Brugerid')]/ancestor::td/following-sibling::td//input[@type='text']")))
+            input_azident.clear()
+
+            date_input = wait.until(EC.element_to_be_clickable((By.XPATH,"//span[contains(., 'Registreringsdato')]/ancestor::td/following-sibling::td//input[@type='text']")))
+            date_input.clear()
+            date_input.send_keys(formatted_date)
+
+            wait.until(EC.element_to_be_clickable((By.XPATH, "//div[@title='Klik for at søge (Ctrl+F8)']"))).click()
+
+            time.sleep(5)
+            if driver.find_elements(By.XPATH, "//span[text()='Tabel indeholder ingen data']"):
+                print("Kunne ikke finde et bilag")
+                continue
+            
+            wait.until(EC.element_to_be_clickable((By.XPATH, "//div[@title='Videresend']"))).click()
+            time.sleep(5)
+            driver.switch_to.default_content()
+            wait.until(EC.frame_to_be_available_and_switch_to_it((By.ID, "URLSPW-0")))
+
+            next_agent_input = wait.until(EC.element_to_be_clickable((By.XPATH, "//span[contains(text(), 'Næste agent')]/ancestor::td//following::input[@type='text']")))
+            next_agent_input.clear()
+            next_agent_input.send_keys(azident)
+
+            textarea = wait.until(EC.element_to_be_clickable((By.XPATH, "//textarea[@title='Comments for Forwarding']")))
+            textarea.clear()
+            textarea.send_keys("Videresendt af Robot")
+
+            #wait.until(EC.element_to_be_clickable((By.XPATH, "//span[normalize-space(text())='Annuller']/ancestor::div[contains(@class, 'lsButton')]"))).click()
+
+            wait.until(EC.element_to_be_clickable((By.XPATH, "//span[normalize-space(text())='OK']/ancestor::div[contains(@class, 'lsButton')]"))).click()
+            time.sleep(2)
+            # Log info
+            
+            orchestrator_connection.log_info(f"Faktura: {faktura_nummer} er videresendt til {azident} d. {formatted_date}")
+
+            # Save to database
+            try:
+                conn = pyodbc.connect("DRIVER={ODBC Driver 17 for SQL Server};SERVER=srvsql29;DATABASE=PyOrchestrator;Trusted_Connection=yes")
+                cursor = conn.cursor()
+                insert_query = """
+                    INSERT INTO FakturaFordeler (Fakturanummer, AzIdent, Dato)
+                    VALUES (?, ?, ?)
+                """
+                cursor.execute(insert_query, faktura_nummer, azident, AktueltBilagsDato.date())
+                conn.commit()
+                cursor.close()
+                conn.close()
+            except Exception as db_error:
+                orchestrator_connection.log_info(f"Database log failed for Faktura {faktura_nummer}: {db_error}")
+
+
+            if pd.notnull(AktueltBilagsDato):
+                handled_bilagsdatoer.append(AktueltBilagsDato)
             else:
-                azident = match.iloc[0]["AZIdent"]
-                print(f"[{label}] AZIDENT for {ref_navn}: {azident}")
-                orchestrator_connection.log_info(f"[{label}] Faktura {faktura_nummer} | Reference: '{ref_navn}' | Matched medarbejder: '{match.iloc[0]['Kaldenavn']}' ({azident})"
-)
-                
-                driver.refresh()
-                wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "div[title='Min Økonomi']"))).click()
-
-                try:
-                    wait.until(EC.element_to_be_clickable((By.ID, "subTabIndex2"))).click()
-                except TimeoutException:
-                    wait.until(EC.element_to_be_clickable((By.XPATH, "//div[contains(text(), 'Bilag og fakturaer')]"))).click()
-                
-                wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "div[title='Bilagsforespørgsel']"))).click()
-                wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "div[title='Søg andre bilag']"))).click()
-                wait.until(EC.frame_to_be_available_and_switch_to_it((By.ID, "contentAreaFrame")))
-                wait.until(EC.frame_to_be_available_and_switch_to_it((By.NAME, "Søg andre bilag")))
-
-                fakturabilag_input = wait.until(EC.element_to_be_clickable((By.XPATH,"//label[contains(., 'Fakturabilag')]/following::input[1]")))
-                fakturabilag_input.clear()
-                fakturabilag_input.send_keys(faktura_nummer)
-
-                input_azident = wait.until(EC.element_to_be_clickable((By.XPATH, "//span[contains(., 'Brugerid')]/ancestor::td/following-sibling::td//input[@type='text']")))
-                input_azident.clear()
-
-                date_input = wait.until(EC.element_to_be_clickable((By.XPATH,"//span[contains(., 'Registreringsdato')]/ancestor::td/following-sibling::td//input[@type='text']")))
-                date_input.clear()
-                date_input.send_keys(formatted_date)
-
-                wait.until(EC.element_to_be_clickable((By.XPATH, "//div[@title='Klik for at søge (Ctrl+F8)']"))).click()
-
-                time.sleep(5)
-                if driver.find_elements(By.XPATH, "//span[text()='Tabel indeholder ingen data']"):
-                    print("Kunne ikke finde et bilag")
-                    continue
-                
-                wait.until(EC.element_to_be_clickable((By.XPATH, "//div[@title='Videresend']"))).click()
-                time.sleep(5)
-                driver.switch_to.default_content()
-                wait.until(EC.frame_to_be_available_and_switch_to_it((By.ID, "URLSPW-0")))
-
-                next_agent_input = wait.until(EC.element_to_be_clickable((By.XPATH, "//span[contains(text(), 'Næste agent')]/ancestor::td//following::input[@type='text']")))
-                next_agent_input.clear()
-                next_agent_input.send_keys(azident)
-
-                textarea = wait.until(EC.element_to_be_clickable((By.XPATH, "//textarea[@title='Comments for Forwarding']")))
-                textarea.clear()
-                textarea.send_keys("Videresendt af Robot")
-
-                #wait.until(EC.element_to_be_clickable((By.XPATH, "//span[normalize-space(text())='Annuller']/ancestor::div[contains(@class, 'lsButton')]"))).click()
-
-                wait.until(EC.element_to_be_clickable((By.XPATH, "//span[normalize-space(text())='OK']/ancestor::div[contains(@class, 'lsButton')]"))).click()
-                time.sleep(2)
-                # Log info
-                
-                orchestrator_connection.log_info(f"Faktura: {faktura_nummer} er videresendt til {azident} d. {formatted_date}")
-
-                # Save to database
-                try:
-                    conn = pyodbc.connect("DRIVER={ODBC Driver 17 for SQL Server};SERVER=srvsql29;DATABASE=PyOrchestrator;Trusted_Connection=yes")
-                    cursor = conn.cursor()
-                    insert_query = """
-                        INSERT INTO FakturaFordeler (Fakturanummer, AzIdent, Dato)
-                        VALUES (?, ?, ?)
-                    """
-                    cursor.execute(insert_query, faktura_nummer, azident, AktueltBilagsDato.date())
-                    conn.commit()
-                    cursor.close()
-                    conn.close()
-                except Exception as db_error:
-                    orchestrator_connection.log_info(f"Database log failed for Faktura {faktura_nummer}: {db_error}")
-
-
-                if pd.notnull(AktueltBilagsDato):
-                    handled_bilagsdatoer.append(AktueltBilagsDato)
-                else:
-                    print("Datoen er overskredet")
+                print("Datoen er overskredet")
 
     def extract_first_name(text):
         if not isinstance(text, str):
