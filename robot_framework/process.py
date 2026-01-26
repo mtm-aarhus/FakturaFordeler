@@ -439,9 +439,6 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
                         candidate = str(row.get(alt_col)).strip()
                         if candidate and candidate.lower() not in ("nan", "n/a"):
                             ref_navn = candidate
-                            orchestrator_connection.log_info(
-                                f"[{label}] Bruger fallback reference kolonne '{alt_col}': {ref_navn}"
-                            )
                             break
             if not contains_letters(ref_navn):
                 print(
@@ -472,7 +469,7 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
             matched_name = None
 
             for ref_candidate in ref_candidates:
-                orchestrator_connection.log_info(
+                print(
                     f"[{label}] Prøver reference-kandidat: '{ref_candidate}'"
                 )
 
@@ -854,12 +851,12 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
             )
 
             if df_seller_filtered.empty:
-                orchestrator_connection.log_info(
+                print(
                     f"[{label}] Ingen sælger-bilag matcher standardafdelingens fakturaer."
                 )
                 continue
 
-            orchestrator_connection.log_info(
+            print(
                 f"[{label}] Sælger-rækker før: {len(df_seller)} | efter filter: {len(df_seller_filtered)}"
             )
 
