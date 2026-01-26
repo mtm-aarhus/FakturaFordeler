@@ -685,7 +685,34 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
 
         oldest_date = df_dates["Bilagsdato"].min()
         return oldest_date
+    
+    def filter_df_by_fakturabilag(df_source, df_reference, faktura_col="Fakturabilag"):
+        """
+        Keep only rows in df_source whose faktura number exists in df_reference
+        """
+        if (
+            df_source is None or df_source.empty
+            or df_reference is None or df_reference.empty
+            or faktura_col not in df_source.columns
+            or faktura_col not in df_reference.columns
+        ):
+            return pd.DataFrame()
 
+        reference_faktura = (
+            df_reference[faktura_col]
+            .dropna()
+            .astype(str)
+            .str.strip()
+            .unique()
+        )
+
+        return df_source[
+            df_source[faktura_col]
+            .astype(str)
+            .str.strip()
+            .isin(reference_faktura)
+        ]
+    
     # === 7. Main Automation Flow ===
     try:
         orchestrator_connection.log_info("Navigating to Opus login page")
@@ -799,20 +826,40 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
 
         #Process standard departments but using sælgers order number: 
         for label, df_seller in seller_dfs:
-            if (
-                df_ident_all is not None
-                and df_seller is not None
-                and not df_seller.empty
-            ):
-                process_dataframe(
-                    label,
-                    df_seller,
-                    df_ident_all,
-                    col_ref_navn="Sælgers ordrenr",
-                    alt_ref_cols=["Købers ordrenr"],
-                    col_bilagsdato="Reg.dato"
-                )
+            if df_ident_all is None or df_seller is None or df_seller.empty:
+                continue
 
+            if "Naturafdelingen" in label:
+                df_reference = df_Naturafdelingen
+            elif "Vejafdelingen" in label:
+                df_reference = df_Vejafdelingen
+            else:
+                continue
+
+            df_seller_filtered = filter_df_by_fakturabilag(
+                df_source=df_seller,
+                df_reference=df_reference,
+                faktura_col="Fakturabilag"
+            )
+
+            if df_seller_filtered.empty:
+                orchestrator_connection.log_info(
+                    f"[{label}] Ingen sælger-bilag matcher standardafdelingens fakturaer."
+                )
+                continue
+
+            orchestrator_connection.log_info(
+                f"[{label}] Sælger-rækker før: {len(df_seller)} | efter filter: {len(df_seller_filtered)}"
+            )
+
+            process_dataframe(
+                label,
+                df_seller_filtered,
+                df_ident_all,
+                col_ref_navn="Sælgers ordrenr",
+                alt_ref_cols=["Købers ordrenr"],
+                col_bilagsdato="Reg.dato"
+            )
 
         
         #Cleanup
