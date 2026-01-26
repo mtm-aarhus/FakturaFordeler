@@ -88,7 +88,14 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
                 time.sleep(1)
         print("Failed to click element after retries.")
         return False
+    def contains_letters(text: str) -> bool:
+        """
+        Returns True if the text contains at least one letter (A–Z / æøå).
+        """
+        if not isinstance(text, str):
+            return False
 
+        return bool(re.search(r"[A-Za-zÆØÅæøå]", text))
     # === 6. Define Utility and Processing Functions ===
     def download_excel_for_ean(ean_number: str, label: str, set_view=True):
         try:
@@ -436,7 +443,11 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
                                 f"[{label}] Bruger fallback reference kolonne '{alt_col}': {ref_navn}"
                             )
                             break
-
+            if not contains_letters(ref_navn):
+                print(
+                    f"[{label}] Springer række over – reference indeholder kun tal/symboler: '{ref_navn}'"
+                )
+                continue
             # --------------------------------------------------
             # 2️⃣ Clean reference
             # --------------------------------------------------
