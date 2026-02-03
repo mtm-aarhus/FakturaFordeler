@@ -16,7 +16,7 @@ classifiers = [
     "Operating System :: Microsoft :: Windows",
 ]
 dependencies = [
-    "OpenOrchestrator>=3.dev0",
+    "OpenOrchestrator == 2.*",
     "Pillow == 10.*",
     "pandas==2.2.3",
     "selenium == 4.33.0",
