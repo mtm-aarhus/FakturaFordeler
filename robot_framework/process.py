@@ -40,6 +40,8 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
     OpusURL = orchestrator_connection.get_constant("OpusAdgangUrl").value
     EAN_Naturafdelingen = orchestrator_connection.get_constant("EAN_Naturafdelingen").value
     EAN_Vejafdelingen = orchestrator_connection.get_constant("EAN_Vejafdelingen").value
+    #Hent by rums ean:
+    #EAN_Byrum = orchestrator_connection.get_constant("EAN_Byrum").value
     date_str = orchestrator_connection.get_constant("Bilagsdato").value
     BilagsDato = datetime.strptime(date_str, "%d-%m-%Y")
 
@@ -88,6 +90,7 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
                 time.sleep(1)
         print("Failed to click element after retries.")
         return False
+    
     def contains_letters(text: str) -> bool:
         """
         Returns True if the text contains at least one letter (A–Z / æøå).
