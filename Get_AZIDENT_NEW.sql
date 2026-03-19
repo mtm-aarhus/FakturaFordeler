@@ -1,10 +1,10 @@
 SELECT
 
-    a.[AZIdent],
+    a.[BrugerNavn],
 
-    a.[Kaldenavn],
+    a.[KaldeNavn],
 
-    a.[EANnedarvet],
+    a.[Tjsted_EAN],
 
     b.[Medarbejdernummer],
 
@@ -12,13 +12,13 @@ SELECT
 
     b.[Maxgrænse]
 
-FROM [Opus].[intdebitor].[InterneDebitorer_BrugerInfo] a
+FROM [ORG].[adm].[Bruger_AD_Aktuel] a
 
 JOIN [Opus].[brugerstyring].[BRS_GodkenderBeløb] b
 
-    ON a.[AZIdent] = b.[Ident]
+    ON a.[BrugerNavn] = b.[Ident]
 
-WHERE a.[EANnedarvet] IN (
+WHERE a.[Tjsted_EAN] IN (
 
     '5798005770183',
 
@@ -37,3 +37,4 @@ WHERE a.[EANnedarvet] IN (
     '5798005775706'
 
 );
+
