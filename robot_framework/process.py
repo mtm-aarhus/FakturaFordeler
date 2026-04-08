@@ -821,7 +821,13 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
         df_ident_all = None
         if has_dataframes_with_rows:
             df_ident_all = fetch_combined_azident(EAN_Vejafdelingen, EAN_Naturafdelingen)
+            df_ident_all.columns = df_ident_all.columns.str.strip()
+
+            if "KaldeNavn" in df_ident_all.columns and "Kaldenavn" not in df_ident_all.columns:
+                df_ident_all = df_ident_all.rename(columns={"KaldeNavn": "Kaldenavn"})
+
             print(f"{len(df_ident_all)} rækker hentet fra SQL.")
+            print("SQL columns:", df_ident_all.columns.tolist())
         else:
             print("Ingen data i nogen af Excel-filerne – springer SQL-opslag over.")
         
