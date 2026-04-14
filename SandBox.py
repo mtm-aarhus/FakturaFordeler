@@ -16,7 +16,6 @@ from selenium.common.exceptions import TimeoutException
 from selenium.common.exceptions import StaleElementReferenceException
 import pyodbc
 import re
-import Levenshtein
 from selenium.webdriver.common.keys import Keys
 
 # pylint: disable-next=unused-argument
@@ -42,6 +41,8 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
     EAN_Vejafdelingen = orchestrator_connection.get_constant("EAN_Vejafdelingen").value
     #Hent by rums ean:
     EAN_Byrum = orchestrator_connection.get_constant("EAN_Byrum").value
+    SHARED_EANS = [ean.strip() for ean in orchestrator_connection.get_constant("SharedEANs").value.split(",") if ean.strip()]
+    BYRUM__SQL_EAN = [ean.strip() for ean in EAN_Byrum.split(",") if ean.strip()]
     date_str = orchestrator_connection.get_constant("Bilagsdato").value
     BilagsDato = datetime.strptime(date_str, "%d-%m-%Y")
     conn_str = (
@@ -381,31 +382,13 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
                 excel_paths.append(path)
         else:
             print(f"{label} eksport blev sprunget over.")
-
-    def fetch_combined_azident(ean_vej: str, ean_natur: str):
+  
+    def fetch_azident_from_sql(sql_file_path, ean_list):
         with open(sql_file_path, 'r', encoding='cp1252') as file:
             sql_query = file.read()
 
-        sql_query = sql_query.replace("'EANVEJ'", f"'{ean_vej}'")
-        sql_query = sql_query.replace("'EANNATUR'", f"'{ean_natur}'")
-
-        conn = pyodbc.connect(conn_str)
-        cursor = conn.cursor()
-        cursor.execute(sql_query)
-        columns = [col[0] for col in cursor.description]
-        rows = cursor.fetchall()
-        df_result = pd.DataFrame.from_records(rows, columns=columns)
-        cursor.close()
-        conn.close()
-        return df_result
-    
-    def fetch_azident_from_sql(sql_file_path, replacements=None):
-        with open(sql_file_path, 'r', encoding='cp1252') as file:
-            sql_query = file.read()
-
-        if replacements:
-            for key, value in replacements.items():
-                sql_query = sql_query.replace(key, value)
+        ean_sql = ",\n    ".join(f"'{ean}'" for ean in ean_list)
+        sql_query = sql_query.replace("{{EAN_LIST}}", ean_sql)
 
         conn = pyodbc.connect(conn_str)
         cursor = conn.cursor()
@@ -671,24 +654,6 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
             else:
                 print("Datoen er overskredet")
 
-    def extract_first_name(text):
-        if not isinstance(text, str):
-            return None
-
-        cleaned = re.sub(r"(?i)(lev\.?\s*ref\.?\s*nr\.?:?|att:)", "", text).strip()
-
-        words = re.findall(r"[A-ZÆØÅa-zæøå]+", cleaned)
-        for word in words:
-            if len(word) > 1 and word.lower() not in DISALLOWED_TERMS:
-                return word
-            return None  
-
-    def extract_first_from_kaldenavn(kaldenavn):
-        if not isinstance(kaldenavn, str):
-            return None
-        parts = kaldenavn.strip().split()
-        return parts[0] if parts else None
-
     def filter_rows_by_references(df, ref_list, column_name="Fakturanr./Reference."):
         if column_name not in df.columns:
             print(f"'{column_name}' column not found.")
@@ -754,17 +719,20 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
     departments = {
         "Naturafdelingen": {
             "ean": EAN_Naturafdelingen,
-            "sql": "Get_AZIDENT_NEW.sql",
+            "sql": "Get_AZIDENT.sql",
+            "sql_eans": SHARED_EANS,
             "shared": True
         },
         "Vejafdelingen": {
             "ean": EAN_Vejafdelingen,
-            "sql": "Get_AZIDENT_NEW.sql",
+            "sql": "Get_AZIDENT.sql",
+            "sql_eans": SHARED_EANS,
             "shared": True
         },
         "Byrum": {
             "ean": EAN_Byrum,
-            "sql": "GetAzident_Byrum.sql",
+            "sql": "Get_AZIDENT.sql",
+            "sql_eans": BYRUM__SQL_EAN,
             "shared": False
         }
     }
@@ -854,16 +822,20 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
         shared_df = None
 
         for name, config in departments.items():
-
             if config["shared"]:
                 if not shared_loaded:
-                    shared_df = fetch_azident_from_sql(config["sql"])
+                    shared_df = fetch_azident_from_sql(
+                        config["sql"],
+                        config["sql_eans"]
+                    )
                     shared_loaded = True
 
                 df_ident_map[name] = shared_df
-
             else:
-                df_ident_map[name] = fetch_azident_from_sql(config["sql"])
+                df_ident_map[name] = fetch_azident_from_sql(
+                    config["sql"],
+                    config["sql_eans"]
+                )
 
         # Process standard departments
         for label, df in dataframes:
