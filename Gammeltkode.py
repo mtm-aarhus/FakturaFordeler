@@ -16,6 +16,7 @@ from selenium.common.exceptions import TimeoutException
 from selenium.common.exceptions import StaleElementReferenceException
 import pyodbc
 import re
+import Levenshtein
 from selenium.webdriver.common.keys import Keys
 
 # pylint: disable-next=unused-argument
@@ -23,7 +24,13 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
     orchestrator_connection.log_trace("Running process.")
     
     # === 2. Global Configuration ===
+    az_pattern = re.compile(r'^AZ\d{5}$')
     downloads_folder = os.path.join("C:\\Users", os.getlogin(), "Downloads")
+    DISALLOWED_TERMS = {
+        "anden", "diverse", "entreprenørenheden", "entreprenørafdelingen",
+        "adm", "adm.", "økonomi", "vejafdelingen", "naturafdelingen",
+        "ikke angivet", "ukendt", "leverandør", "ref.", "faktura", "x", "aarhus", "kommune"
+    }
     max_retries = 3
 
     OpusLogin = orchestrator_connection.get_credential("OpusBruger")
@@ -34,17 +41,10 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
     EAN_Naturafdelingen = orchestrator_connection.get_constant("EAN_Naturafdelingen").value
     EAN_Vejafdelingen = orchestrator_connection.get_constant("EAN_Vejafdelingen").value
     #Hent by rums ean:
-    EAN_Byrum = orchestrator_connection.get_constant("EAN_Byrum").value
-    SHARED_EANS = [ean.strip() for ean in orchestrator_connection.get_constant("SharedEANs").value.split(",") if ean.strip()]
-    BYRUM__SQL_EAN = [ean.strip() for ean in EAN_Byrum.split(",") if ean.strip()]
+    #EAN_Byrum = orchestrator_connection.get_constant("EAN_Byrum").value
     date_str = orchestrator_connection.get_constant("Bilagsdato").value
     BilagsDato = datetime.strptime(date_str, "%d-%m-%Y")
-    conn_str = (
-    "DRIVER={ODBC Driver 17 for SQL Server};"
-    "SERVER=faellessql;"
-    "DATABASE=Opus;"
-    "Trusted_Connection=yes"
-    )
+
 
     # === 4. Setup Chrome Driver ===
     options = Options()
@@ -376,26 +376,22 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
                 excel_paths.append(path)
         else:
             print(f"{label} eksport blev sprunget over.")
-  
-    def fetch_azident_from_sql(sql_file_path, ean_list):
+
+    def fetch_combined_azident(ean_vej: str, ean_natur: str):
         with open(sql_file_path, 'r', encoding='cp1252') as file:
             sql_query = file.read()
 
-        ean_sql = ",\n    ".join(f"'{ean}'" for ean in ean_list)
-        sql_query = sql_query.replace("{{EAN_LIST}}", ean_sql)
+        sql_query = sql_query.replace("'EANVEJ'", f"'{ean_vej}'")
+        sql_query = sql_query.replace("'EANNATUR'", f"'{ean_natur}'")
 
         conn = pyodbc.connect(conn_str)
         cursor = conn.cursor()
         cursor.execute(sql_query)
-
         columns = [col[0] for col in cursor.description]
         rows = cursor.fetchall()
-
         df_result = pd.DataFrame.from_records(rows, columns=columns)
-
         cursor.close()
         conn.close()
-
         return df_result
 
     def is_single_first_name(name: str) -> bool:
@@ -648,6 +644,24 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
             else:
                 print("Datoen er overskredet")
 
+    def extract_first_name(text):
+        if not isinstance(text, str):
+            return None
+
+        cleaned = re.sub(r"(?i)(lev\.?\s*ref\.?\s*nr\.?:?|att:)", "", text).strip()
+
+        words = re.findall(r"[A-ZÆØÅa-zæøå]+", cleaned)
+        for word in words:
+            if len(word) > 1 and word.lower() not in DISALLOWED_TERMS:
+                return word
+            return None  
+
+    def extract_first_from_kaldenavn(kaldenavn):
+        if not isinstance(kaldenavn, str):
+            return None
+        parts = kaldenavn.strip().split()
+        return parts[0] if parts else None
+
     def filter_rows_by_references(df, ref_list, column_name="Fakturanr./Reference."):
         if column_name not in df.columns:
             print(f"'{column_name}' column not found.")
@@ -709,27 +723,7 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
             .str.strip()
             .isin(reference_faktura)
         ]
-
-    departments = {
-        "Naturafdelingen": {
-            "ean": EAN_Naturafdelingen,
-            "sql": "Get_AZIDENT.sql",
-            "sql_eans": SHARED_EANS,
-            "shared": True
-        },
-        "Vejafdelingen": {
-            "ean": EAN_Vejafdelingen,
-            "sql": "Get_AZIDENT.sql",
-            "sql_eans": SHARED_EANS,
-            "shared": True
-        },
-        "Byrum": {
-            "ean": EAN_Byrum,
-            "sql": "Get_AZIDENT.sql",
-            "sql_eans": BYRUM__SQL_EAN,
-            "shared": False
-        }
-    }
+    
     # === 7. Main Automation Flow ===
     try:
         orchestrator_connection.log_info("Navigating to Opus login page")
@@ -785,67 +779,78 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
         print("Switched to inner iframe: Bilagsindbakke")
 
         time.sleep(5)
-        # ---- Download all files and store DataFrames ----
-        department_data = {}
+        # ---- Download both files and store DataFrames ----
+        df_Naturafdelingen, path_Natur = download_excel_for_ean(EAN_Naturafdelingen, "Naturafdelingen", set_view=True)
+        df_Vejafdelingen, path_Vej = download_excel_for_ean(EAN_Vejafdelingen, "Vejafdelingen", set_view=True)
+        natur_oldest_full = get_oldest_bilagsdato_from_original(df_Naturafdelingen)
+        vej_oldest_full = get_oldest_bilagsdato_from_original(df_Vejafdelingen)
+
         seller_dfs = []
-        oldest_dates = {}
 
-        for name, config in departments.items():
+        if natur_oldest_full:
+            seller_dfs.append(
+                ("Seller Naturafdelingen",
+                get_seller_order_number(driver, wait, natur_oldest_full, EAN_Naturafdelingen))
+            )
 
-            df, path = download_excel_for_ean(config["ean"], name, set_view=True)
-            register_dataframe(name, df, path)
+        if vej_oldest_full:
+            seller_dfs.append(
+                ("Seller Vejafdelingen",
+                get_seller_order_number(driver, wait, vej_oldest_full, EAN_Vejafdelingen))
+            )
 
-            department_data[name] = df
-            oldest_dates[name] = get_oldest_bilagsdato_from_original(df)
 
-        # ---- Fetch seller order numbers after all downloads ----
-        for name, config in departments.items():
-            oldest = oldest_dates.get(name)
+        
+        # Register both raw and filtered Stark data
+        register_dataframe("Naturafdelingen", df_Naturafdelingen, path_Natur)
+        register_dataframe("Vejafdelingen", df_Vejafdelingen, path_Vej)
 
-            if oldest:
-                seller_dfs.append(
-                    (
-                        f"Seller {name}",
-                        get_seller_order_number(driver, wait, oldest, config["ean"])
-                    )
-                )
+
         # Fetch AZIdent data
-        df_ident_map = {}
+        conn_str = (
+            "DRIVER={ODBC Driver 17 for SQL Server};"
+            "SERVER=faellessql;"
+            "DATABASE=Opus;"
+            "Trusted_Connection=yes"
+        )
+        sql_file_path = 'Get_AZIDENT_NEW.sql'
 
-        shared_loaded = False
-        shared_df = None
+        # Only fetch SQL data if any of the Excel dataframes have rows
+        has_dataframes_with_rows = any(df is not None and not df.empty for _, df in dataframes)
 
-        for name, config in departments.items():
-            if config["shared"]:
-                if not shared_loaded:
-                    shared_df = fetch_azident_from_sql(
-                        config["sql"],
-                        config["sql_eans"]
-                    )
-                    shared_loaded = True
+        df_ident_all = None
+        if has_dataframes_with_rows:
+            df_ident_all = fetch_combined_azident(EAN_Vejafdelingen, EAN_Naturafdelingen)
+            df_ident_all.columns = df_ident_all.columns.str.strip()
 
-                df_ident_map[name] = shared_df
-            else:
-                df_ident_map[name] = fetch_azident_from_sql(
-                    config["sql"],
-                    config["sql_eans"]
-                )
+            if "KaldeNavn" in df_ident_all.columns and "Kaldenavn" not in df_ident_all.columns:
+                df_ident_all = df_ident_all.rename(columns={"KaldeNavn": "Kaldenavn"})
+
+            print(f"{len(df_ident_all)} rækker hentet fra SQL.")
+            print("SQL columns:", df_ident_all.columns.tolist())
+        else:
+            print("Ingen data i nogen af Excel-filerne – springer SQL-opslag over.")
+        
+
 
         # Process standard departments
+        standard_labels = ["Naturafdelingen", "Vejafdelingen"]
+
         for label, df in dataframes:
-            df_ident = df_ident_map.get(label)
+            if label in standard_labels and df_ident_all is not None:
+                process_dataframe(label, df, df_ident_all)
 
-            if df_ident is not None:
-                process_dataframe(label, df, df_ident)
 
-        # Process standard departments but using sælgers order number:
+        #Process standard departments but using sælgers order number: 
         for label, df_seller in seller_dfs:
+            if df_ident_all is None or df_seller is None or df_seller.empty:
+                continue
 
-            dept_name = label.replace("Seller ", "")
-            df_ident = df_ident_map.get(dept_name)
-            df_reference = department_data.get(dept_name)
-
-            if df_ident is None or df_seller is None or df_seller.empty:
+            if "Naturafdelingen" in label:
+                df_reference = df_Naturafdelingen
+            elif "Vejafdelingen" in label:
+                df_reference = df_Vejafdelingen
+            else:
                 continue
 
             df_seller_filtered = filter_df_by_fakturabilag(
@@ -867,12 +872,13 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
             process_dataframe(
                 label,
                 df_seller_filtered,
-                df_ident,
+                df_ident_all,
                 col_ref_navn="Sælgers ordrenr",
                 alt_ref_cols=["Købers ordrenr"],
                 col_bilagsdato="Reg.dato"
             )
 
+        
         #Cleanup
         for file_path in excel_paths:
             try:
@@ -908,6 +914,8 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
         else:
             print("Ingen bilag blev behandlet – Bilagsdato forbliver uændret.")
 
+    
+
     except Exception as e:
         orchestrator_connection.log_error(f"An error occurred: {e}")
         print(f"An error occurred: {e}")
@@ -916,3 +924,6 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
     
     finally:
         driver.quit()
+
+
+
