@@ -35,7 +35,7 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
     EAN_Vejafdelingen = orchestrator_connection.get_constant("EAN_Vejafdelingen").value
     #Hent by rums ean:
     EAN_Byrum = orchestrator_connection.get_constant("EAN_Byrum").value
-    SHARED_EANS = [ean.strip() for ean in orchestrator_connection.get_constant("SharedEANs").value.split(",") if ean.strip()]
+    SHARED_EANS = [ean.strip() for ean in orchestrator_connection.get_constant("EAN_Shared").value.split(",") if ean.strip()]
     BYRUM__SQL_EAN = [ean.strip() for ean in EAN_Byrum.split(",") if ean.strip()]
     date_str = orchestrator_connection.get_constant("Bilagsdato").value
     BilagsDato = datetime.strptime(date_str, "%d-%m-%Y")
