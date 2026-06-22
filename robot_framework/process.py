@@ -736,49 +736,50 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
             "sql": "Get_AZIDENT.sql",
             "sql_eans": BYRUM__SQL_EAN,
             "shared": False
-        },
-        "Digitalisering": {
-            "ean": EAN_Digitalisering,
-            "sql": "Get_AZIDENT.sql",
-            "sql_eans": [EAN_Digitalisering],
-            "shared": False
-        },
-        "Bygninger": {
-            "ean": EAN_Bygninger,
-            "sql": "Get_AZIDENT.sql",
-            "sql_eans": [EAN_Bygninger],
-            "shared": False
-        },
-        "Byliv": {
-            "ean": EAN_Byliv,
-            "sql": "Get_AZIDENT.sql",
-            "sql_eans": [EAN_Byliv],
-            "shared": False
-        },
-        "DistriktSyd": {
-            "ean": EAN_DistriktSyd,
-            "sql": "Get_AZIDENT.sql",
-            "sql_eans": [EAN_DistriktSyd],
-            "shared": False
-        },
-        "DistriktNord": {
-            "ean": EAN_DistriktNord,
-            "sql": "Get_AZIDENT.sql",
-            "sql_eans": [EAN_DistriktNord],
-            "shared": False
-        },
-        "DistriktOest": {
-            "ean": EAN_DistriktOest,
-            "sql": "Get_AZIDENT.sql",
-            "sql_eans": [EAN_DistriktOest],
-            "shared": False
-        },
-        "DistriktVest": {
-            "ean": EAN_DistriktVest,
-            "sql": "Get_AZIDENT.sql",
-            "sql_eans": [EAN_DistriktVest],
-            "shared": False
         }
+        # ,
+        # "Digitalisering": {
+        #     "ean": EAN_Digitalisering,
+        #     "sql": "Get_AZIDENT.sql",
+        #     "sql_eans": [EAN_Digitalisering],
+        #     "shared": False
+        # },
+        # "Bygninger": {
+        #     "ean": EAN_Bygninger,
+        #     "sql": "Get_AZIDENT.sql",
+        #     "sql_eans": [EAN_Bygninger],
+        #     "shared": False
+        # },
+        # "Byliv": {
+        #     "ean": EAN_Byliv,
+        #     "sql": "Get_AZIDENT.sql",
+        #     "sql_eans": [EAN_Byliv],
+        #     "shared": False
+        # },
+        # "DistriktSyd": {
+        #     "ean": EAN_DistriktSyd,
+        #     "sql": "Get_AZIDENT.sql",
+        #     "sql_eans": [EAN_DistriktSyd],
+        #     "shared": False
+        # },
+        # "DistriktNord": {
+        #     "ean": EAN_DistriktNord,
+        #     "sql": "Get_AZIDENT.sql",
+        #     "sql_eans": [EAN_DistriktNord],
+        #     "shared": False
+        # },
+        # "DistriktOest": {
+        #     "ean": EAN_DistriktOest,
+        #     "sql": "Get_AZIDENT.sql",
+        #     "sql_eans": [EAN_DistriktOest],
+        #     "shared": False
+        # },
+        # "DistriktVest": {
+        #     "ean": EAN_DistriktVest,
+        #     "sql": "Get_AZIDENT.sql",
+        #     "sql_eans": [EAN_DistriktVest],
+        #     "shared": False
+        # }
     }
     # === 7. Main Automation Flow ===
     try:
