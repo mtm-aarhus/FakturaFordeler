@@ -37,6 +37,14 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
     EAN_Byrum = orchestrator_connection.get_constant("EAN_Byrum").value
     SHARED_EANS = [ean.strip() for ean in orchestrator_connection.get_constant("EAN_Shared").value.split(",") if ean.strip()]
     BYRUM__SQL_EAN = [ean.strip() for ean in EAN_Byrum.split(",") if ean.strip()]
+    # Nye afdelinger (individuelle EAN, shared=False)
+    EAN_Digitalisering = orchestrator_connection.get_constant("EAN_Digitalisering").value
+    EAN_Bygninger = orchestrator_connection.get_constant("EAN_Bygninger").value
+    EAN_Byliv = orchestrator_connection.get_constant("EAN_Byliv").value
+    EAN_DistriktSyd = orchestrator_connection.get_constant("EAN_DistriktSyd").value
+    EAN_DistriktNord = orchestrator_connection.get_constant("EAN_DistriktNord").value
+    EAN_DistriktOest = orchestrator_connection.get_constant("EAN_DistriktOest").value
+    EAN_DistriktVest = orchestrator_connection.get_constant("EAN_DistriktVest").value
     date_str = orchestrator_connection.get_constant("Bilagsdato").value
     BilagsDato = datetime.strptime(date_str, "%d-%m-%Y")
     conn_str = (
@@ -727,6 +735,48 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
             "ean": EAN_Byrum,
             "sql": "Get_AZIDENT.sql",
             "sql_eans": BYRUM__SQL_EAN,
+            "shared": False
+        },
+        "Digitalisering": {
+            "ean": EAN_Digitalisering,
+            "sql": "Get_AZIDENT.sql",
+            "sql_eans": [EAN_Digitalisering],
+            "shared": False
+        },
+        "Bygninger": {
+            "ean": EAN_Bygninger,
+            "sql": "Get_AZIDENT.sql",
+            "sql_eans": [EAN_Bygninger],
+            "shared": False
+        },
+        "Byliv": {
+            "ean": EAN_Byliv,
+            "sql": "Get_AZIDENT.sql",
+            "sql_eans": [EAN_Byliv],
+            "shared": False
+        },
+        "DistriktSyd": {
+            "ean": EAN_DistriktSyd,
+            "sql": "Get_AZIDENT.sql",
+            "sql_eans": [EAN_DistriktSyd],
+            "shared": False
+        },
+        "DistriktNord": {
+            "ean": EAN_DistriktNord,
+            "sql": "Get_AZIDENT.sql",
+            "sql_eans": [EAN_DistriktNord],
+            "shared": False
+        },
+        "DistriktOest": {
+            "ean": EAN_DistriktOest,
+            "sql": "Get_AZIDENT.sql",
+            "sql_eans": [EAN_DistriktOest],
+            "shared": False
+        },
+        "DistriktVest": {
+            "ean": EAN_DistriktVest,
+            "sql": "Get_AZIDENT.sql",
+            "sql_eans": [EAN_DistriktVest],
             "shared": False
         }
     }
