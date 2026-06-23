@@ -80,6 +80,7 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
             time.sleep(1)
 
     wait = WebDriverWait(driver, 100)
+    export_wait = WebDriverWait(driver, 30)
     print("ChromeDriver initialized successfully.")
 
     # === 5. Initialize Working Variables ===
@@ -148,9 +149,9 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
             
             # Wrap export in try-except
             try:
-                if not safe_click(wait, By.XPATH, "//div[@title='Eksport']"):
+                if not safe_click(export_wait, By.XPATH, "//div[@title='Eksport']"):
                     raise TimeoutException("Failed to click 'Eksport'")
-                if not safe_click(wait, By.XPATH, "//tr[@role='menuitem' and .//span[text()='Eksport til Excel']]"):
+                if not safe_click(export_wait, By.XPATH, "//tr[@role='menuitem' and .//span[text()='Eksport til Excel']]"):
                     raise TimeoutException("Failed to click 'Eksport til Excel'")
             except TimeoutException:
                 print(f"[{label}] Export button not found or stale. Skipping this table.")
@@ -430,6 +431,7 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
         label,
         df,
         df_ident,
+        ean=None,
         col_ref_navn="Ref.navn",
         alt_ref_cols=None,
         col_bilagsdato="Reg.dato"
@@ -640,10 +642,10 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
                 conn = pyodbc.connect("DRIVER={ODBC Driver 17 for SQL Server};SERVER=srvsql29;DATABASE=PyOrchestrator;Trusted_Connection=yes")
                 cursor = conn.cursor()
                 insert_query = """
-                    INSERT INTO FakturaFordeler (Fakturanummer, AzIdent, Dato)
-                    VALUES (?, ?, ?)
+                    INSERT INTO FakturaFordeler (Fakturanummer, AzIdent, Dato, Ean)
+                    VALUES (?, ?, ?, ?)
                 """
-                cursor.execute(insert_query, faktura_nummer, azident, AktueltBilagsDato.date())
+                cursor.execute(insert_query, faktura_nummer, azident, AktueltBilagsDato.date(), ean)
                 conn.commit()
                 cursor.close()
                 conn.close()
@@ -886,8 +888,8 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
             df_ident = df_ident_map.get(label)
 
             if df_ident is not None:
-                process_dataframe(label, df, df_ident)
-
+                process_dataframe(label, df, df_ident, ean=departments[label]["ean"])
+    
         # Process standard departments but using sælgers order number:
         for label, df_seller in seller_dfs:
 
@@ -914,10 +916,12 @@ def process(orchestrator_connection: OrchestratorConnection, queue_element: Queu
                 f"[{label}] Sælger-rækker før: {len(df_seller)} | efter filter: {len(df_seller_filtered)}"
             )
 
+
             process_dataframe(
                 label,
                 df_seller_filtered,
                 df_ident,
+                ean=departments[dept_name]["ean"],
                 col_ref_navn="Sælgers ordrenr",
                 alt_ref_cols=["Købers ordrenr"],
                 col_bilagsdato="Reg.dato"
